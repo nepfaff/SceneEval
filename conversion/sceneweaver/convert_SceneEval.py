@@ -125,6 +125,58 @@ def build_transform_matrix(location: list[float], rotation: list[float], scale: 
     return flat
 
 
+def extract_transform_from_blender_matrix(matrix: Matrix) -> dict:
+    """
+    Extract transform dict from Blender 4x4 world matrix.
+
+    Args:
+        matrix: Blender 4x4 transformation matrix (matrix_world)
+
+    Returns:
+        Dictionary with transform data in SceneEval format.
+    """
+    loc, rot, scale = matrix.decompose()
+
+    # Column-major flattening for SceneEval
+    flat_data = []
+    for col in range(4):
+        for row in range(4):
+            flat_data.append(matrix[row][col])
+
+    return {
+        "rows": 4,
+        "cols": 4,
+        "data": flat_data,
+        "rotation": [rot.x, rot.y, rot.z, rot.w],
+        "translation": [loc.x, loc.y, loc.z],
+        "scale": [scale.x, scale.y, scale.z]
+    }
+
+
+def create_identity_transform() -> dict:
+    """
+    Create an Identity transform dict.
+
+    Used when the world transform is already baked into the GLB vertex positions.
+
+    Returns:
+        Dictionary with Identity transform in SceneEval format.
+    """
+    return {
+        "rows": 4,
+        "cols": 4,
+        "data": [
+            1.0, 0.0, 0.0, 0.0,  # Column 0
+            0.0, 1.0, 0.0, 0.0,  # Column 1
+            0.0, 0.0, 1.0, 0.0,  # Column 2
+            0.0, 0.0, 0.0, 1.0   # Column 3
+        ],
+        "rotation": [0.0, 0.0, 0.0, 1.0],
+        "translation": [0.0, 0.0, 0.0],
+        "scale": [1.0, 1.0, 1.0]
+    }
+
+
 def build_architecture(roomsize: list[float], wall_height: float = DEFAULT_WALL_HEIGHT) -> dict:
     """
     Build architecture elements (floor and walls) from room size.
@@ -226,172 +278,108 @@ def extract_category(obj_name: str) -> str:
     return "object"
 
 
-def extract_factory_type(layout_name: str) -> str:
+def generate_object_id_from_blender(obj: bpy.types.Object) -> str:
     """
-    Extract factory type from layout JSON object name.
+    Generate a unique ID from Blender object name.
 
+    Input pattern: {FactoryType}({seed}).spawn_asset({seed2})
+    Output pattern: {seed}_{FactoryType} or {seed}_{FactoryType}.001
+
+    Args:
+        obj: Blender object
+
+    Returns:
+        Human-readable object ID like "3164690_BedFactory" or "3164690_PillowFactory.001"
+    """
+    name = obj.name
+
+    # Extract factory type (before first parenthesis)
+    paren_idx = name.find("(")
+    factory_type = name[:paren_idx] if paren_idx > 0 else "Unknown"
+
+    # Extract seed (number between first parentheses)
+    try:
+        seed_start = name.find("(") + 1
+        seed_end = name.find(")")
+        seed = name[seed_start:seed_end]
+    except:
+        seed = "0"
+
+    # Handle Blender duplicate suffix (.001, .002, etc.)
+    # These appear after the last closing parenthesis
+    suffix = ""
+    last_paren = name.rfind(")")
+    if last_paren >= 0 and last_paren < len(name) - 1:
+        suffix = name[last_paren + 1:]  # e.g., ".001"
+
+    return f"{seed}_{factory_type}{suffix}"
+
+
+def find_all_spawn_asset_objects() -> list[bpy.types.Object]:
+    """
+    Find all Blender objects matching the spawn_asset pattern.
+
+    These are individual exportable mesh objects from Infinigen factories.
+
+    Pattern: {FactoryType}({seed}).spawn_asset({seed2})
     Examples:
-        '5348940_BedFactory' -> 'BedFactory'
-        '9391942_wardrobe' -> 'wardrobe'
-        '4061705_toy' -> 'toy'
-    """
-    parts = layout_name.split("_")
-    if len(parts) >= 2:
-        return parts[-1]
-    return layout_name
-
-
-def find_blender_object_by_factory(factory_type: str, used_objects: set) -> bpy.types.Object | None:
-    """
-    Find a Blender object matching the factory type.
-
-    Args:
-        factory_type: The factory type to search for (e.g., 'BedFactory', 'wardrobe')
-        used_objects: Set of already matched object names to avoid duplicates
+        - BedFactory(3164690).spawn_asset(7191960)
+        - MattressFactory(3164690).spawn_asset(7191960)
+        - ObjaverseCategoryFactory(1210932).spawn_asset(7874330)
 
     Returns:
-        Matching Blender object or None
+        List of Blender objects that are individual exportable meshes
     """
-    # Blender naming patterns:
-    # - Procedural: 'BedFactory(3164690).spawn_asset(7191960)'
-    # - Objaverse: 'ObjaverseCategoryFactory(1210932).spawn_asset(7874330)'
+    spawn_asset_objects = []
 
-    # First try exact factory match with .spawn_asset
     for obj in bpy.data.objects:
-        if obj.name in used_objects:
-            continue
+        # Skip non-mesh objects (cameras, lights, empties, etc.)
         if obj.type != 'MESH':
             continue
 
-        # Match pattern: {FactoryType}({seed}).spawn_asset({seed})
-        if obj.name.startswith(f"{factory_type}(") and ".spawn_asset(" in obj.name:
-            return obj
+        # Match the spawn_asset pattern
+        if ".spawn_asset(" in obj.name:
+            # Validate object has actual geometry
+            if obj.data is not None and len(obj.data.vertices) > 0:
+                spawn_asset_objects.append(obj)
 
-    # For generic types like 'wardrobe', 'toy', 'laundrybasket' - these are ObjaverseCategoryFactory
-    # We need a different matching strategy - perhaps by position or by keeping track
-
-    return None
-
-
-def build_factory_to_blender_map() -> dict[str, list[bpy.types.Object]]:
-    """
-    Build a mapping from factory types to all matching Blender objects.
-
-    Returns:
-        Dict mapping factory type to list of Blender objects
-    """
-    factory_map = {}
-
-    for obj in bpy.data.objects:
-        if obj.type != 'MESH':
-            continue
-        if ".spawn_asset(" not in obj.name:
-            continue
-
-        # Extract factory type from Blender object name
-        # Pattern: {FactoryType}({seed}).spawn_asset({seed})
-        paren_idx = obj.name.find("(")
-        if paren_idx > 0:
-            factory_type = obj.name[:paren_idx]
-            if factory_type not in factory_map:
-                factory_map[factory_type] = []
-            factory_map[factory_type].append(obj)
-
-    return factory_map
-
-
-def find_closest_objaverse_object(
-    target_location: list[float],
-    objaverse_objects: list[bpy.types.Object],
-    used_objects: set,
-    tolerance: float = 1.0
-) -> bpy.types.Object | None:
-    """
-    Find the closest ObjaverseCategoryFactory object by position.
-
-    Args:
-        target_location: Target position [x, y, z]
-        objaverse_objects: List of ObjaverseCategoryFactory Blender objects
-        used_objects: Set of already matched object names
-        tolerance: Maximum distance threshold
-
-    Returns:
-        Closest matching Blender object or None
-    """
-    best_obj = None
-    best_distance = float('inf')
-
-    target = Vector(target_location)
-
-    for obj in objaverse_objects:
-        if obj.name in used_objects:
-            continue
-
-        # Get object's world location
-        obj_location = obj.location
-        distance = (target - obj_location).length
-
-        if distance < best_distance and distance < tolerance:
-            best_distance = distance
-            best_obj = obj
-
-    return best_obj
+    return spawn_asset_objects
 
 
 # =============================================================================
 # Blender Export Functions
 # =============================================================================
 
-def select_object_hierarchy(obj: bpy.types.Object) -> None:
-    """Select an object and all its children recursively."""
-    bpy.ops.object.select_all(action='DESELECT')
-
-    def select_recursive(o):
-        o.select_set(True)
-        for child in o.children:
-            select_recursive(child)
-
-    select_recursive(obj)
-    bpy.context.view_layer.objects.active = obj
-
-
 def export_object_as_glb(obj: bpy.types.Object, output_path: Path) -> bool:
     """
-    Export a single object (and its children) as a GLB file.
+    Export a single object (NOT its children) as a GLB file.
+
+    The object's world transform is baked into the vertex positions via export_apply=True,
+    so the scene state should use an Identity transform.
 
     Args:
-        obj: Blender object to export
+        obj: Blender object to export (single mesh, no hierarchy)
         output_path: Path to save the GLB file
 
     Returns:
         True if export succeeded, False otherwise.
     """
     try:
-        # Select object and children
-        select_object_hierarchy(obj)
+        # Select ONLY this object (no children)
+        bpy.ops.object.select_all(action='DESELECT')
+        obj.select_set(True)
+        bpy.context.view_layer.objects.active = obj
 
-        # Store original transform
-        orig_location = obj.location.copy()
-        orig_rotation = obj.rotation_euler.copy()
-
-        # Reset transform for export (we'll apply transform in scene state)
-        obj.location = (0, 0, 0)
-        obj.rotation_euler = (0, 0, 0)
-
-        # Export as GLB
-        # Keep Z-up coordinate system (don't convert to glTF's Y-up)
-        # This ensures transforms from Blender match the exported geometry
+        # Export as GLB with export_apply=True
+        # This bakes the world transform into the vertex positions
+        # Use standard Y-up glTF coordinate system - SceneEval/Blender will convert back to Z-up on import
         bpy.ops.export_scene.gltf(
             filepath=str(output_path),
             use_selection=True,
             export_apply=True,
             export_format='GLB',
-            export_yup=False  # Keep Blender's Z-up coordinate system
+            export_yup=True  # Standard glTF Y-up, converted back to Z-up on import
         )
-
-        # Restore original transform
-        obj.location = orig_location
-        obj.rotation_euler = orig_rotation
 
         return True
     except Exception as e:
@@ -449,107 +437,48 @@ def convert_sceneweaver_scene(
     print(f"  Room size: {roomsize}")
 
     # Create output directories
-    scene_output_dir = output_dir / f"scene_{scene_id}"
-    assets_dir = scene_output_dir / "assets"
-    scene_output_dir.mkdir(parents=True, exist_ok=True)
-    assets_dir.mkdir(parents=True, exist_ok=True)
+    # Assets go in scene_N/assets/ subdirectory
+    # Scene JSON goes directly in output_dir as scene_N.json (SceneEval convention)
+    scene_assets_dir = output_dir / f"scene_{scene_id}" / "assets"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    scene_assets_dir.mkdir(parents=True, exist_ok=True)
 
     # Open Blender file
     print(f"  Opening Blender file: {blend_file}")
     bpy.ops.wm.open_mainfile(filepath=str(blend_file))
 
+    # DIRECT BLENDER TRAVERSAL: Find all spawn_asset objects
+    # This matches SceneWeaver's own object counting methodology (Nobj_unique)
+    spawn_objects = find_all_spawn_asset_objects()
+    print(f"  Found {len(spawn_objects)} spawn_asset objects in Blender")
+
     # Process objects
     objects_data = []
-    objects_info = layout.get("objects", {})
 
-    print(f"  Found {len(objects_info)} objects in layout")
+    for obj in spawn_objects:
+        # Generate unique object ID from Blender object name
+        obj_id = generate_object_id_from_blender(obj)
+        print(f"    Processing: {obj.name} -> {obj_id}")
 
-    # Build mapping of factory types to Blender objects
-    factory_map = build_factory_to_blender_map()
-    print(f"  Blender factory types: {list(factory_map.keys())}")
-
-    # Track used objects to avoid duplicates
-    used_blender_objects = set()
-
-    for obj_name, obj_info in objects_info.items():
-        print(f"    Processing: {obj_name}")
-
-        # Extract factory type from layout name
-        factory_type = extract_factory_type(obj_name)
-        print(f"      Factory type: {factory_type}")
-
-        # Find matching Blender object
-        blender_obj = None
-
-        # Try direct factory match first
-        if factory_type in factory_map:
-            for candidate in factory_map[factory_type]:
-                if candidate.name not in used_blender_objects:
-                    blender_obj = candidate
-                    break
-
-        # If not found, try case-insensitive match or partial match
-        if blender_obj is None:
-            for ftype, candidates in factory_map.items():
-                if factory_type.lower() in ftype.lower() or ftype.lower() in factory_type.lower():
-                    for candidate in candidates:
-                        if candidate.name not in used_blender_objects:
-                            blender_obj = candidate
-                            break
-                    if blender_obj:
-                        break
-
-        # If still not found, try position-based matching with ObjaverseCategoryFactory
-        if blender_obj is None and "ObjaverseCategoryFactory" in factory_map:
-            location = obj_info.get("location", [0, 0, 0])
-            blender_obj = find_closest_objaverse_object(
-                location,
-                factory_map["ObjaverseCategoryFactory"],
-                used_blender_objects,
-                tolerance=1.5  # Allow up to 1.5 meter distance
-            )
-            if blender_obj:
-                print(f"      Position-matched to ObjaverseCategoryFactory: {blender_obj.name}")
-
-        if blender_obj is None:
-            print(f"      Warning: No Blender object found for factory '{factory_type}', skipping")
+        # Export single object (NO hierarchy)
+        glb_path = scene_assets_dir / f"{obj_id}.glb"
+        if not export_object_as_glb(obj, glb_path):
+            print(f"      Failed to export: {obj_id}")
             continue
 
-        used_blender_objects.add(blender_obj.name)
-        print(f"      Matched Blender object: {blender_obj.name}")
+        print(f"      Exported: {glb_path.name}")
 
-        # Export object as GLB
-        glb_path = assets_dir / f"{obj_name}.glb"
-        if export_object_as_glb(blender_obj, glb_path):
-            print(f"      Exported: {glb_path.name}")
-        else:
-            print(f"      Failed to export: {obj_name}")
-            continue
-
-        # Get transform info from layout
-        location = obj_info.get("location", [0, 0, 0])
-        rotation = obj_info.get("rotation", [0, 0, 0])
-        size = obj_info.get("size", [1, 1, 1])
-
-        # Build transform matrix
-        transform_data = build_transform_matrix(location, rotation)
+        # Use Identity transform since world position is baked into the GLB via export_apply=True
+        transform_data = create_identity_transform()
 
         # Build object entry
-        # Include scene_id in modelId to support per-scene assets
         obj_entry = {
-            "id": obj_name,
-            "modelId": f"sceneweaver.scene_{scene_id}__{obj_name}",
+            "id": obj_id,
+            "modelId": f"sceneweaver.scene_{scene_id}__{obj_id}",
             "index": len(objects_data),
             "parentId": "",
             "parentIndex": -1,
-            "transform": {
-                "rows": 4,
-                "cols": 4,
-                "data": transform_data,
-                "rotation": euler_to_quaternion(rotation),
-                "translation": location,
-                "scale": [1.0, 1.0, 1.0]  # Scale is baked into the exported GLB
-            }
+            "transform": transform_data
         }
         objects_data.append(obj_entry)
 
@@ -567,8 +496,8 @@ def convert_sceneweaver_scene(
     scene_state["scene"]["arch"]["regions"] = arch_data["regions"]
     scene_state["scene"]["object"] = objects_data
 
-    # Save scene state
-    output_json = scene_output_dir / f"scene_{scene_id}.json"
+    # Save scene state (directly in output_dir, not in subdirectory)
+    output_json = output_dir / f"scene_{scene_id}.json"
     with open(output_json, "w") as f:
         json.dump(scene_state, f, indent=2)
 

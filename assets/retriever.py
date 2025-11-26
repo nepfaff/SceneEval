@@ -31,7 +31,7 @@ class Retriever:
             AssetInfo object containing the asset's information
         """
         
-        asset_id_prefix, asset_id = asset_id.split(".")
+        asset_id_prefix, asset_id = asset_id.split(".", 1)
         if asset_id_prefix not in self.dataset_map:
             raise ValueError(f"Dataset with prefix '{asset_id_prefix}' not found.")
         
