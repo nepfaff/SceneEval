@@ -40,3 +40,9 @@ models:
     output_dir_name: ${models.LayoutVLM.input_dir_name}
     asset_datasets:
       - layoutvlm_objathor
+
+  SceneWeaver:
+    input_dir_name: SceneWeaver
+    output_dir_name: ${models.SceneWeaver.input_dir_name}
+    asset_datasets:
+      - sceneweaver

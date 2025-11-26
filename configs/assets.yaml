@@ -19,6 +19,11 @@ assets:
     dataset_root_path: _data/layoutvlm-objathor
     dataset_metadata_path: null # No central metadata file, info is in each asset's data.json
 
+  sceneweaver:
+    asset_id_prefix: sceneweaver
+    dataset_root_path: input/SceneWeaver  # Assets are exported per-scene under scene_X/assets/
+    dataset_metadata_path: null  # No central metadata file
+
 # Default asset directories for retrieval
 # _data
 # ├── 3D-FUTURE-model

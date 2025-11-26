@@ -55,7 +55,8 @@ class CollisionMetric(BaseMetric):
         collision_results = {
             obj_id: {
                 "in_collision": False,
-                "colliding_with": []
+                "colliding_with": [],
+                "collision_details": []  # Store depth/contact info per collision
             }
         for obj_id in self.scene.get_obj_ids()}
         
@@ -90,10 +91,31 @@ class CollisionMetric(BaseMetric):
                     
                     # If still in collision, add the other object to the collision results
                     if double_check_in_collision:
+                        # Extract collision severity metrics from contact data
+                        depths = [contact.depth for contact in contact_data if hasattr(contact, 'depth')]
+                        max_depth = float(max(depths)) if depths else 0.0
+                        mean_depth = float(np.mean(depths)) if depths else 0.0
+                        num_contacts = len(contact_data)
+
+                        collision_detail = {
+                            "other_obj": other_obj_id,
+                            "max_depth": max_depth,
+                            "mean_depth": mean_depth,
+                            "num_contact_points": num_contacts
+                        }
+
                         collision_results[obj_id]["in_collision"] = True
                         collision_results[obj_id]["colliding_with"].append(other_obj_id)
+                        collision_results[obj_id]["collision_details"].append(collision_detail)
+
                         collision_results[other_obj_id]["in_collision"] = True
                         collision_results[other_obj_id]["colliding_with"].append(obj_id)
+                        collision_results[other_obj_id]["collision_details"].append({
+                            "other_obj": obj_id,
+                            "max_depth": max_depth,
+                            "mean_depth": mean_depth,
+                            "num_contact_points": num_contacts
+                        })
                     
                 print((
                     f"Checked: {obj_id} and {other_obj_id} - 1st check: {in_collision}, 2nd check: {double_check_in_collision if in_collision else 'N/A'} -> "
@@ -107,11 +129,35 @@ class CollisionMetric(BaseMetric):
         num_obj_in_collision = sum(obj_result["in_collision"] for obj_result in collision_results.values())
         scene_in_collision = num_obj_in_collision > 0
 
+        # Compute aggregate collision severity metrics
+        all_max_depths = []
+        all_mean_depths = []
+        total_contact_points = 0
+        num_collision_pairs = 0
+
+        for obj_result in collision_results.values():
+            for detail in obj_result["collision_details"]:
+                all_max_depths.append(detail["max_depth"])
+                all_mean_depths.append(detail["mean_depth"])
+                total_contact_points += detail["num_contact_points"]
+                num_collision_pairs += 1
+
+        # Each collision pair is counted twice (once per object), so divide by 2
+        num_collision_pairs = num_collision_pairs // 2
+        total_contact_points = total_contact_points // 2
+
+        overall_max_depth = float(max(all_max_depths)) if all_max_depths else 0.0
+        overall_mean_depth = float(np.mean(all_max_depths)) if all_max_depths else 0.0
+
         result = MetricResult(
-            message=f"Scene is in collision: {scene_in_collision}, with {num_obj_in_collision}/{len(self.scene.get_obj_ids())} objects in collision.",
+            message=f"Scene is in collision: {scene_in_collision}, with {num_obj_in_collision}/{len(self.scene.get_obj_ids())} objects in collision. Max depth: {overall_max_depth:.4f}m, {num_collision_pairs} collision pairs.",
             data={
                 "scene_in_collision": scene_in_collision,
                 "num_obj_in_collision": num_obj_in_collision,
+                "num_collision_pairs": num_collision_pairs,
+                "max_penetration_depth": overall_max_depth,
+                "mean_penetration_depth": overall_mean_depth,
+                "total_contact_points": total_contact_points,
                 "collision_results": collision_results
             }
         )
