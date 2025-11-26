@@ -26,126 +26,66 @@
 
 
 
-## Environment Setup
+## Quick Start
 
-### 1. Environment Setup
-First, create and activate the [conda](https://www.anaconda.com/docs/getting-started/miniconda/main) environment:
+### 1. Install dependencies with uv
+
+```bash
+uv sync
+source .venv/bin/activate
+```
+
+### 2. Download data
+
+Run the setup script to download all available datasets:
+
+```bash
+./setup.sh
+```
+
+This will:
+- Download SceneEval-500 annotations
+- Download Objathor assets (for Holodeck) - ~50GB
+- Download HSSD assets (for HSM) - ~80GB (requires `gltf-transform` and `ktx`)
+
+**Manual downloads required** (due to licensing):
+- **3D-FUTURE** (for ATISS, DiffuScene, LayoutGPT, InstructScene): [Download here](https://tianchi.aliyun.com/specials/promotion/alibaba-3d-future) → extract to `_data/3D-FUTURE-model/`
+- **LayoutVLM assets**: [Download here](https://github.com/sunfanyunn/LayoutVLM#data-preprocessing) → extract to `_data/layoutvlm-objathor/`
+
+### 3. (Optional) Setup OpenAI API Key
+
+For VLM-dependent metrics (*Object Count*, *Object Attribute*, *Object-Object Relationship*, *Object-Architecture Relationship*, *Object Support*, *Object Accessibility*), create a `.env` file:
+```
+OPENAI_API_KEY=<your_key>
+```
+
+Metrics that do NOT require a VLM: *Collision*, *Navigability*, *Out of Bounds*, *Opening Clearance*
+
+---
+
+<details>
+<summary><strong>Alternative: Install with conda</strong></summary>
+
 ```bash
 conda env create -f environment.yaml
 conda activate scene_eval
 ```
 
-### 2. (Optional) Setup OpenAI API Key
-SceneEval requires an VLM to run certain metrics.
-
-Metrics that DO NOT require a VLM are:
-- *Collision*, *Navigability*, *Out of Bounds*, and *Opening Clearance* 
-
-Metrics that REQUIRE a VLM are:
-- *Object Count*, *Object Attribute*, *Object-Object Relationship*, *Object-Architecture Relationship*, *Object Support*, *Object Accessibility*
-
-To run the metrics that require a VLM, the default implementation uses OpenAI's GPT-4o, so you will need an OpenAI API key. (The demo below does not require this.)
-
-Create a `.env` file in the root directory following the template in `.env.example`, and add your OpenAI API key:
-```
-OPENAI_API_KEY=<your_openai_api_key_here>
-```
-
-
-## Dataset and 3D Assets Setup
-
-### 1. Download SceneEval-500 Dataset
-Download the SceneEval-500 annotations from this repository's [Releases](https://github.com/3dlg-hcvc/SceneEval/releases/tag/SceneEval-500_v250610) page and place the `annotations.csv` file in the `input` directory. The structure should look like:
-```
-.
-└── input
-    ├── annotations.csv
-    ├── empty_scene.json
-    ├── hotel_room_1k.exr
-    ├── human.glb
-    └── ...
-```
-
-**Dataset Composition:**
-- **SceneEval-100**: The first 100 entries (IDs 0-99) are manually created
-- **SceneEval-500**: The full dataset includes 400 additional entries generated semi-automatically using a VLM
-
-### 2. Download 3D Assets
-
-SceneEval needs 3D assets to recreate scenes from different generation methods.
-You only need to download the assets for the methods you want to evaluate.
-
-<details>
-<summary><strong>
-For 3D-FUTURE methods
-<a href="https://github.com/nv-tlabs/ATISS">ATISS</a>,
-<a href="https://github.com/tangjiapeng/DiffuScene">DiffuScene</a>,
-<a href="https://github.com/weixi-feng/LayoutGPT">LayoutGPT</a>,
-<a href="https://github.com/chenguolin/InstructScene">InstructScene</a>
-</strong></summary>
-
-1. Visit the [3D-FUTURE dataset page](https://tianchi.aliyun.com/specials/promotion/alibaba-3d-future)
-2. Follow their download instructions
-3. Place the downloaded assets in `_data/3D-FUTURE-model/`
-
 </details>
 
 <details>
-<summary><strong>
-For <a href="https://github.com/allenai/Holodeck">Holodeck</a>
-</strong></summary>
+<summary><strong>HSSD prerequisites (for HSM support)</strong></summary>
 
-Run our automated download script to download and preprocess the Objathor assets they use:
-```bash
-python scripts/prepare_objathor.py
-
-# On Linux, you may see an `directory not empty` error; this is an issue in the original Objathor download script and can be ignored. Simply enter 'y' and press Enter when prompted.
-```
-</details>
-
-<details id="layoutvlm">
-<summary><strong>
-For <a href="https://github.com/sunfanyunn/LayoutVLM">LayoutVLM</a>
-</strong></summary>
-
-1. Download their preprocessed assets from [their repo](https://github.com/sunfanyunn/LayoutVLM?tab=readme-ov-file#data-preprocessing).
-2. Unzip and place the contents in `_data/layoutvlm-objathor/`
-
-</details>
-
-
-<details>
-<summary><strong>
-For <a href="https://github.com/3dlg-hcvc/HSM">HSM</a>
-</strong></summary>
-
-HSM uses assets from the [Habitat Synthetic Scenes Dataset (HSSD)](https://3dlg-hcvc.github.io/hssd/).
-Some assets are compressed with *KHR_texture_basisu*, which is currently not supported by Blender.
-We provide a script to download and decompress the assets into Blender-compatible GLB files.
-
-Prerequisites:
+To download HSSD assets, you need:
 1. [Agree to the HSSD dataset license on HuggingFace](https://huggingface.co/datasets/hssd/hssd-models)
-       
-2. Set up to clone repos from HuggingFace using SSH or HTTPS:
-    - For SSH: [set up SSH keys on your machine and add the public key to your HuggingFace account](https://huggingface.co/docs/hub/en/security-git-ssh)
-    - For HTTPS: [prepare to enter your HuggingFace access token with write permissions when prompted](https://huggingface.co/docs/hub/en/security-tokens)
-
-3. Install *gltf-transform* and *ktx* command line tools and ensure they are in your PATH:
-    - [gltf-transform](https://www.npmjs.com/package/@gltf-transform/cli) via npm: `npm install -g @gltf-transform/cli`
-    - [ktx](https://github.com/KhronosGroup/KTX-Software/releases) from the KhronosGroup/KTX-Software repository
-
-Then run the script:
-```bash
-python scripts/prepare_hsm.py
-```
+2. Install tools:
+   - [gltf-transform](https://www.npmjs.com/package/@gltf-transform/cli): `npm install -g @gltf-transform/cli`
+   - [ktx](https://github.com/KhronosGroup/KTX-Software/releases) from KhronosGroup
 
 </details>
 
----
 <details>
-<summary><strong>
-Your <code>_data/</code> directory should look like this if you have all assets downloaded
-</strong></summary>
+<summary><strong>Expected <code>_data/</code> directory structure</strong></summary>
 
 ```
 _data

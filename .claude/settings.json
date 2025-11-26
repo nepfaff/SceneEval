@@ -1,0 +1,20 @@
+{
+  "enableAllProjectMcpServers": true,
+  "permissions": {
+    "allow": [
+      "Bash(black:*)",
+      "Bash(isort:*)",
+      "Bash(autoflake:*)",
+      "Bash(timeout:*)",
+      "Bash(cat:*)",
+      "Read(**)",
+      "Search(**)",
+      "Bash(git diff:*)",
+      "mcp__serena__*",
+      "mcp__context7__*",
+      "Bash(pytest:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

@@ -1,0 +1,57 @@
+[project]
+name = "scene-eval"
+version = "1.1.0"
+description = "Scene evaluation metrics for 3D indoor scenes"
+readme = "README.md"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+    # Core dependencies
+    "numpy<2",
+    "pyyaml",
+    "tqdm",
+    "hydra-core",
+    "matplotlib",
+    "natsort",
+
+    # For GPT/VLM
+    "openai",
+    "python-dotenv",
+    "pydantic",
+
+    # For Trimesh
+    "trimesh[easy]>=4,<5",
+    "pyglet<2",
+    "scipy",
+    "pillow",
+    "networkx",
+    "rtree",
+    "shapely",
+    "mapbox_earcut",
+
+    # For navigability and accessibility metrics
+    "opencv-python",
+
+    # For data generation
+    "flask",
+
+    # Collision detection and geometry processing
+    "python-fcl",
+    "manifold3d",
+    "embreex",
+
+    # Blender
+    "bpy==4.2.13",
+    "mathutils",
+    "fake-bpy-module-4.2",
+
+    # For setup script
+    "gdown",
+
+    # For Objathor/Holodeck asset preparation
+    "objathor",
+    "attrs",
+    "pip",  # Needed by prepare_objathor.py to install ai2thor from custom index
+]
+
+[dependency-groups]
+dev = []
