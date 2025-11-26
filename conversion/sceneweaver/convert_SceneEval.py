@@ -347,6 +347,271 @@ def find_all_spawn_asset_objects() -> list[bpy.types.Object]:
 
 
 # =============================================================================
+# Texture Baking Functions
+# =============================================================================
+
+def material_needs_baking(mat) -> bool:
+    """
+    Check if a material needs baking for glTF export.
+
+    Returns True if the material doesn't have an image texture that will export properly.
+    This catches:
+    - Procedural textures (noise, voronoi, etc.)
+    - GROUP nodes (Infinigen shader groups)
+    - RGB nodes (solid colors)
+    - MIX nodes (color mixing)
+    - Color Ramp nodes
+    - Any non-image input to Principled BSDF
+
+    Args:
+        mat: Blender material to check
+
+    Returns:
+        True if material needs baking
+    """
+    if not mat or not mat.use_nodes:
+        return False
+
+    nodes = mat.node_tree.nodes
+    links = mat.node_tree.links
+
+    # Find Principled BSDF or Material Output
+    principled = None
+    material_output = None
+    for node in nodes:
+        if node.type == 'BSDF_PRINCIPLED':
+            principled = node
+        elif node.type == 'OUTPUT_MATERIAL':
+            material_output = node
+
+    # If there's a Principled BSDF, check if Base Color has image texture
+    if principled:
+        base_color_input = principled.inputs.get('Base Color')
+        if base_color_input and base_color_input.is_linked:
+            for link in links:
+                if link.to_socket == base_color_input:
+                    if link.from_node.type == 'TEX_IMAGE' and link.from_node.image:
+                        return False  # Already has image texture - no baking needed
+
+    # If no Principled BSDF (e.g., GROUP-based shader), check what's connected to Material Output
+    # GROUP nodes need baking since they contain procedural shaders internally
+    if not principled and material_output:
+        surface_input = material_output.inputs.get('Surface')
+        if surface_input and surface_input.is_linked:
+            for link in links:
+                if link.to_socket == surface_input:
+                    # GROUP node - needs baking
+                    if link.from_node.type == 'GROUP':
+                        return True
+
+    # If we have a Principled BSDF but no image texture connected, we need baking
+    if principled:
+        return True
+
+    return False
+
+
+def has_procedural_materials(obj: bpy.types.Object) -> bool:
+    """
+    Check if object has any materials that need baking.
+
+    Args:
+        obj: Blender object to check
+
+    Returns:
+        True if any material needs baking
+    """
+    if not obj.data or not hasattr(obj.data, 'materials') or not obj.data.materials:
+        return False
+
+    for mat in obj.data.materials:
+        if material_needs_baking(mat):
+            return True
+
+    return False
+
+
+def ensure_uv_layer(obj: bpy.types.Object) -> bool:
+    """
+    Ensure object has a UV layer, creating one via smart projection if needed.
+
+    Args:
+        obj: Blender mesh object
+
+    Returns:
+        True if UV layer exists or was created successfully
+    """
+    if obj.data.uv_layers:
+        return True
+
+    try:
+        # Store current selection state
+        prev_active = bpy.context.view_layer.objects.active
+        prev_selected = [o for o in bpy.context.selected_objects]
+
+        # Select only this object
+        bpy.ops.object.select_all(action='DESELECT')
+        obj.select_set(True)
+        bpy.context.view_layer.objects.active = obj
+
+        # Enter edit mode and create UV projection
+        bpy.ops.object.mode_set(mode='EDIT')
+        bpy.ops.mesh.select_all(action='SELECT')
+        bpy.ops.uv.smart_project(angle_limit=66, island_margin=0.02)
+        bpy.ops.object.mode_set(mode='OBJECT')
+
+        # Restore selection state
+        bpy.ops.object.select_all(action='DESELECT')
+        for o in prev_selected:
+            o.select_set(True)
+        bpy.context.view_layer.objects.active = prev_active
+
+        return True
+    except Exception as e:
+        print(f"    Warning: Failed to create UV layer for {obj.name}: {e}")
+        return False
+
+
+def bake_procedural_materials(obj: bpy.types.Object, output_dir: Path, resolution: int = 1024) -> bool:
+    """
+    Bake procedural materials to image textures for glTF export.
+
+    This function:
+    1. Checks if the object has procedural materials (noise, voronoi, etc.)
+    2. Creates UV mapping if needed
+    3. Bakes the diffuse color to an image texture
+    4. Replaces the procedural shader connection with the baked image
+
+    Args:
+        obj: Blender object with procedural materials
+        output_dir: Directory to save baked textures
+        resolution: Texture resolution (default 1024x1024)
+
+    Returns:
+        True if baking succeeded or was not needed, False on error
+    """
+    if not has_procedural_materials(obj):
+        return True
+
+    print(f"    Baking procedural materials for: {obj.name}")
+
+    # Ensure object has UVs
+    if not ensure_uv_layer(obj):
+        print(f"    Warning: Could not create UVs for {obj.name}, skipping bake")
+        return False
+
+    # Store original render engine
+    original_engine = bpy.context.scene.render.engine
+
+    try:
+        # Set up Cycles for baking
+        bpy.context.scene.render.engine = 'CYCLES'
+        bpy.context.scene.cycles.device = 'CPU'  # CPU is more reliable for baking
+        bpy.context.scene.cycles.samples = 16  # Low samples for diffuse bake
+
+        # Select and activate object
+        bpy.ops.object.select_all(action='DESELECT')
+        obj.select_set(True)
+        bpy.context.view_layer.objects.active = obj
+
+        # Process each material that needs baking
+        for mat_idx, mat in enumerate(obj.data.materials):
+            if not mat or not mat.use_nodes:
+                continue
+
+            # Skip materials that don't need baking
+            if not material_needs_baking(mat):
+                continue
+
+            nodes = mat.node_tree.nodes
+            links = mat.node_tree.links
+
+            # Find Principled BSDF node (may not exist for GROUP-based materials)
+            principled = None
+            material_output = None
+            for node in nodes:
+                if node.type == 'BSDF_PRINCIPLED':
+                    principled = node
+                elif node.type == 'OUTPUT_MATERIAL':
+                    material_output = node
+
+            # Create bake image
+            safe_obj_name = obj.name.replace("(", "_").replace(")", "_").replace(".", "_")
+            safe_mat_name = mat.name.replace("(", "_").replace(")", "_").replace(".", "_")
+            img_name = f"{safe_obj_name}_{safe_mat_name}_baked"
+            bake_img = bpy.data.images.new(img_name, resolution, resolution, alpha=False)
+            bake_img.colorspace_settings.name = 'sRGB'
+
+            # Create image texture node for baking target
+            tex_node = nodes.new('ShaderNodeTexImage')
+            tex_node.image = bake_img
+            if principled:
+                tex_node.location = (principled.location.x - 400, principled.location.y)
+            else:
+                tex_node.location = (-400, 0)
+
+            # Set as active node for baking
+            nodes.active = tex_node
+
+            # Configure bake settings
+            print(f"      Baking material: {mat.name}")
+
+            # Use COMBINED bake to capture full material appearance
+            # This works better than DIFFUSE for complex procedural shaders
+            bpy.context.scene.render.bake.use_pass_direct = True
+            bpy.context.scene.render.bake.use_pass_indirect = True
+            bpy.context.scene.render.bake.use_pass_diffuse = True
+            bpy.context.scene.render.bake.use_pass_glossy = False
+            bpy.context.scene.render.bake.use_pass_transmission = False
+            bpy.context.scene.render.bake.use_pass_emit = True
+
+            # Perform the bake
+            bpy.ops.object.bake(type='COMBINED')
+
+            # Save baked image
+            img_path = output_dir / f"{img_name}.png"
+            bake_img.filepath_raw = str(img_path)
+            bake_img.file_format = 'PNG'
+            bake_img.save()
+            print(f"      Saved: {img_path.name}")
+
+            # Connect baked image to shader
+            if principled:
+                # Remove existing links to Base Color input
+                for link in list(links):
+                    if link.to_node == principled and link.to_socket.name == 'Base Color':
+                        links.remove(link)
+                # Connect baked image to Principled BSDF Base Color
+                links.new(tex_node.outputs['Color'], principled.inputs['Base Color'])
+            else:
+                # For GROUP-based materials, create a new Principled BSDF and connect
+                # This replaces the GROUP shader with a simple image-based material
+                new_principled = nodes.new('ShaderNodeBsdfPrincipled')
+                new_principled.location = (0, 0)
+
+                # Connect baked image to new Principled BSDF
+                links.new(tex_node.outputs['Color'], new_principled.inputs['Base Color'])
+
+                # Connect new Principled BSDF to Material Output
+                if material_output:
+                    # Remove existing link to Surface
+                    for link in list(links):
+                        if link.to_node == material_output and link.to_socket.name == 'Surface':
+                            links.remove(link)
+                    links.new(new_principled.outputs['BSDF'], material_output.inputs['Surface'])
+
+        return True
+
+    except Exception as e:
+        print(f"    Error baking materials for {obj.name}: {e}")
+        return False
+
+    finally:
+        # Restore original render engine
+        bpy.context.scene.render.engine = original_engine
+
+
+# =============================================================================
 # Blender Export Functions
 # =============================================================================
 
@@ -395,7 +660,8 @@ def convert_sceneweaver_scene(
     input_dir: Path,
     output_dir: Path,
     scene_id: int,
-    wall_height: float = DEFAULT_WALL_HEIGHT
+    wall_height: float = DEFAULT_WALL_HEIGHT,
+    export_architecture: bool = False
 ) -> Path:
     """
     Convert a SceneWeaver scene to SceneEval format.
@@ -405,6 +671,7 @@ def convert_sceneweaver_scene(
         output_dir: Path to SceneEval input directory
         scene_id: Scene ID for output filename
         wall_height: Height of walls
+        export_architecture: If True, export floor/wall meshes from SceneWeaver with baked textures
 
     Returns:
         Path to the created scene state JSON file.
@@ -460,6 +727,9 @@ def convert_sceneweaver_scene(
         obj_id = generate_object_id_from_blender(obj)
         print(f"    Processing: {obj.name} -> {obj_id}")
 
+        # Bake procedural materials to textures before export
+        bake_procedural_materials(obj, scene_assets_dir, resolution=1024)
+
         # Export single object (NO hierarchy)
         glb_path = scene_assets_dir / f"{obj_id}.glb"
         if not export_object_as_glb(obj, glb_path):
@@ -482,7 +752,58 @@ def convert_sceneweaver_scene(
         }
         objects_data.append(obj_entry)
 
-    # Build architecture
+    # Export architecture with baked textures if requested
+    architecture_objects = []
+    if export_architecture:
+        print("  Exporting SceneWeaver architecture with baked textures...")
+
+        # Find and export floor mesh
+        floor_obj = None
+        for obj in bpy.data.objects:
+            if obj.type == 'MESH' and 'floor' in obj.name.lower():
+                floor_obj = obj
+                break
+
+        if floor_obj:
+            print(f"    Found floor: {floor_obj.name}")
+            bake_procedural_materials(floor_obj, scene_assets_dir, resolution=1024)
+            floor_glb = scene_assets_dir / "architecture_floor.glb"
+            if export_object_as_glb(floor_obj, floor_glb):
+                print(f"      Exported: {floor_glb.name}")
+                architecture_objects.append({
+                    "id": "architecture_floor",
+                    "modelId": f"sceneweaver.scene_{scene_id}__architecture_floor",
+                    "index": len(objects_data) + len(architecture_objects),
+                    "parentId": "",
+                    "parentIndex": -1,
+                    "transform": create_identity_transform(),
+                    "isArchitecture": True
+                })
+
+        # Find and export wall mesh
+        wall_obj = None
+        for obj in bpy.data.objects:
+            if obj.type == 'MESH' and 'wall' in obj.name.lower():
+                wall_obj = obj
+                break
+
+        if wall_obj:
+            print(f"    Found wall: {wall_obj.name}")
+            bake_procedural_materials(wall_obj, scene_assets_dir, resolution=1024)
+            wall_glb = scene_assets_dir / "architecture_walls.glb"
+            if export_object_as_glb(wall_obj, wall_glb):
+                print(f"      Exported: {wall_glb.name}")
+                architecture_objects.append({
+                    "id": "architecture_walls",
+                    "modelId": f"sceneweaver.scene_{scene_id}__architecture_walls",
+                    "index": len(objects_data) + len(architecture_objects),
+                    "parentId": "",
+                    "parentIndex": -1,
+                    "transform": create_identity_transform(),
+                    "isArchitecture": True
+                })
+
+    # Build architecture (default simple geometry if not exporting SceneWeaver architecture)
     arch_data = build_architecture(roomsize, wall_height)
 
     # Create scene state
@@ -494,7 +815,8 @@ def convert_sceneweaver_scene(
     scene_state["scene"]["arch"]["id"] = scene_uuid
     scene_state["scene"]["arch"]["elements"] = arch_data["elements"]
     scene_state["scene"]["arch"]["regions"] = arch_data["regions"]
-    scene_state["scene"]["object"] = objects_data
+    # Include both regular objects and architecture objects (if exported)
+    scene_state["scene"]["object"] = objects_data + architecture_objects
 
     # Save scene state (directly in output_dir, not in subdirectory)
     output_json = output_dir / f"scene_{scene_id}.json"
@@ -503,6 +825,13 @@ def convert_sceneweaver_scene(
 
     print(f"  Saved scene state: {output_json}")
     print(f"  Exported {len(objects_data)} objects")
+
+    # Copy original blend file for high-quality rendering
+    # (The GLB exports have texture baking issues, original blend has perfect materials)
+    import shutil
+    original_blend_dest = scene_assets_dir / "original_sceneweaver.blend"
+    shutil.copy2(blend_file, original_blend_dest)
+    print(f"  Copied original blend file: {original_blend_dest}")
 
     return output_json
 
@@ -545,6 +874,11 @@ def main():
         default=DEFAULT_WALL_HEIGHT,
         help=f"Wall height in meters (default: {DEFAULT_WALL_HEIGHT})"
     )
+    parser.add_argument(
+        "--export_architecture",
+        action="store_true",
+        help="Export floor/wall meshes from SceneWeaver with baked textures (default: use SceneEval's simple architecture)"
+    )
 
     args = parser.parse_args(argv)
 
@@ -552,7 +886,8 @@ def main():
         input_dir=args.input_dir,
         output_dir=args.output_dir,
         scene_id=args.scene_id,
-        wall_height=args.wall_height
+        wall_height=args.wall_height,
+        export_architecture=args.export_architecture
     )
 
 
