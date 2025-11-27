@@ -1,7 +1,7 @@
 """Drake utilities for physics simulation in SceneEval.
 
 This module provides utilities for:
-- CoACD convex decomposition for collision geometry
+- CoACD and VHACD convex decomposition for collision geometry
 - SDF file generation from trimesh objects
 - Drake MultibodyPlant creation from SceneEval scenes
 - Penetration detection and displacement measurement
@@ -12,6 +12,7 @@ import tempfile
 import time
 import xml.etree.ElementTree as ET
 from pathlib import Path
+from typing import Literal
 
 import coacd
 import numpy as np
@@ -21,10 +22,12 @@ from pydrake.all import (
     AddMultibodyPlantSceneGraph,
     DiagramBuilder,
     LoadModelDirectives,
+    MeshcatVisualizer,
     MultibodyPlant,
     ProcessModelDirectives,
     SceneGraph,
     Simulator,
+    StartMeshcat,
 )
 
 from scenes import Scene
@@ -87,6 +90,49 @@ def generate_collision_geometry(
         return [mesh.copy()]
 
 
+def generate_collision_geometry_vhacd(
+    mesh: trimesh.Trimesh, **kwargs
+) -> list[trimesh.Trimesh]:
+    """Generate convex decomposition collision geometry using VHACD.
+
+    Args:
+        mesh: Input mesh to decompose.
+        **kwargs: Additional kwargs passed to trimesh.convex_decomposition().
+
+    Returns:
+        List of convex mesh pieces from the decomposition.
+        Falls back to convex hull if VHACD fails.
+    """
+    console_logger.info("Generating collision geometry with VHACD")
+
+    try:
+        start_time = time.time()
+
+        # Use trimesh's convex_decomposition which uses vhacdx.
+        convex_pieces = mesh.convex_decomposition(**kwargs)
+
+        # Ensure result is a list.
+        if not isinstance(convex_pieces, list):
+            convex_pieces = [convex_pieces]
+
+        console_logger.info(
+            f"VHACD decomposition complete: {len(convex_pieces)} convex pieces "
+            f"generated from {len(mesh.vertices)} vertices, {len(mesh.faces)} faces "
+            f"in {time.time() - start_time:.2f} seconds"
+        )
+
+        return convex_pieces
+
+    except Exception as e:
+        console_logger.warning(
+            f"VHACD decomposition failed ({e}), falling back to original mesh. "
+            f"Drake will auto-compute convex hull if needed."
+        )
+        # Fallback to original mesh - Drake handles non-convex meshes by
+        # automatically computing convex hull when needed.
+        return [mesh.copy()]
+
+
 def generate_sdf_from_trimesh(
     mesh: trimesh.Trimesh,
     output_dir: Path,
@@ -94,12 +140,13 @@ def generate_sdf_from_trimesh(
     use_trimesh_inertia: bool = False,
     density: float = 1000.0,
     coacd_threshold: float = 0.05,
+    decomposition_method: Literal["coacd", "vhacd"] = "coacd",
 ) -> Path:
     """Generate Drake SDF file from trimesh mesh.
 
-    Creates an SDF file with CoACD collision geometry pieces used for both
-    visual and collision geometry. This simplifies the pipeline since visual
-    fidelity doesn't matter for physics simulation.
+    Creates an SDF file with convex decomposition collision geometry pieces
+    used for both visual and collision geometry. This simplifies the pipeline
+    since visual fidelity doesn't matter for physics simulation.
 
     Args:
         mesh: Input trimesh mesh in local coordinates.
@@ -109,7 +156,8 @@ def generate_sdf_from_trimesh(
             inertia from mesh geometry. If False, use mass=1kg and omit
             inertia (Drake uses defaults).
         density: Density in kg/m³ (only used if use_trimesh_inertia=True).
-        coacd_threshold: CoACD approximation threshold.
+        coacd_threshold: CoACD approximation threshold (only used for coacd).
+        decomposition_method: Convex decomposition method ("coacd" or "vhacd").
 
     Returns:
         Path to the generated SDF file.
@@ -117,8 +165,11 @@ def generate_sdf_from_trimesh(
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Generate collision geometry (CoACD pieces).
-    collision_pieces = generate_collision_geometry(mesh, threshold=coacd_threshold)
+    # Generate collision geometry using specified method.
+    if decomposition_method == "vhacd":
+        collision_pieces = generate_collision_geometry_vhacd(mesh)
+    else:
+        collision_pieces = generate_collision_geometry(mesh, threshold=coacd_threshold)
 
     # Create SDF XML structure.
     sdf = ET.Element("sdf", version="1.7")
@@ -281,6 +332,7 @@ def create_drake_plant_from_scene(
     use_trimesh_inertia: bool = False,
     density: float = 1000.0,
     coacd_threshold: float = 0.05,
+    decomposition_method: Literal["coacd", "vhacd"] = "coacd",
 ) -> tuple[DiagramBuilder, MultibodyPlant, SceneGraph, dict[str, str]]:
     """Create Drake plant from SceneEval scene.
 
@@ -295,7 +347,8 @@ def create_drake_plant_from_scene(
         weld_to_world: List of object IDs to weld to world (make static).
         use_trimesh_inertia: If True, compute mass/inertia from mesh.
         density: Density in kg/m³ (only used if use_trimesh_inertia=True).
-        coacd_threshold: CoACD approximation threshold.
+        coacd_threshold: CoACD approximation threshold (only used for coacd).
+        decomposition_method: Convex decomposition method ("coacd" or "vhacd").
 
     Returns:
         Tuple of (builder, plant, scene_graph, obj_id_to_model_name).
@@ -343,6 +396,7 @@ def create_drake_plant_from_scene(
                 use_trimesh_inertia=use_trimesh_inertia,
                 density=density,
                 coacd_threshold=coacd_threshold,
+                decomposition_method=decomposition_method,
             )
 
         # Generate floor plan SDF (architecture is also already in world coords).
@@ -604,6 +658,8 @@ def run_simulation(
     builder: DiagramBuilder,
     plant: MultibodyPlant,
     simulation_time: float = 2.0,
+    scene_graph: SceneGraph | None = None,
+    output_html_path: Path | None = None,
 ) -> tuple:
     """Run Drake simulation and return initial and final contexts.
 
@@ -611,10 +667,25 @@ def run_simulation(
         builder: Drake DiagramBuilder (plant must be finalized).
         plant: Drake MultibodyPlant.
         simulation_time: Time to simulate in seconds.
+        scene_graph: Drake SceneGraph (required if output_html_path is set).
+        output_html_path: If provided, save meshcat visualization to this HTML file.
 
     Returns:
         Tuple of (diagram, initial_context, final_context).
     """
+    meshcat = None
+    visualizer = None
+
+    # Set up visualization if HTML output is requested.
+    if output_html_path is not None:
+        if scene_graph is None:
+            raise ValueError("scene_graph is required when output_html_path is set")
+        meshcat = StartMeshcat()
+        meshcat.SetProperty("/Background", "top_color", [1.0, 1.0, 1.0])
+        meshcat.SetProperty("/Background", "bottom_color", [1.0, 1.0, 1.0])
+        meshcat.SetProperty("/Grid", "visible", False)
+        visualizer = MeshcatVisualizer.AddToBuilder(builder, scene_graph, meshcat)
+
     # Build diagram.
     diagram = builder.Build()
 
@@ -631,12 +702,27 @@ def run_simulation(
     # Copy initial state for later comparison.
     initial_state = initial_context.Clone()
 
+    # Start recording if visualizing.
+    if visualizer is not None:
+        visualizer.StartRecording()
+
     # Run simulation.
     console_logger.info(f"Running simulation for {simulation_time} seconds")
     start_time = time.time()
     simulator.AdvanceTo(simulation_time)
     end_time = time.time()
     console_logger.info(f"Simulation completed in {end_time - start_time:.2f} seconds")
+
+    # Stop recording and export HTML if visualizing.
+    if visualizer is not None and meshcat is not None:
+        visualizer.StopRecording()
+        visualizer.PublishRecording()
+
+        html = meshcat.StaticHtml()
+        output_html_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(output_html_path, "w") as f:
+            f.write(html)
+        console_logger.info(f"Saved simulation HTML to {output_html_path}")
 
     # Get final context.
     final_context = simulator.get_context()

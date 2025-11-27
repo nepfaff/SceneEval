@@ -42,6 +42,7 @@ dependencies = [
     # Drake physics simulation
     "drake",
     "coacd",
+    "vhacdx>=0.0.8.post2",  # For VHACD convex decomposition
 
     # Blender
     "bpy==4.2.13",

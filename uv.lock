@@ -1195,6 +1195,7 @@ dependencies = [
     { name = "shapely" },
     { name = "tqdm" },
     { name = "trimesh", extra = ["easy"] },
+    { name = "vhacdx" },
 ]
 
 [package.metadata]
@@ -1230,6 +1231,7 @@ requires-dist = [
     { name = "shapely" },
     { name = "tqdm" },
     { name = "trimesh", extras = ["easy"], specifier = ">=4,<5" },
+    { name = "vhacdx", specifier = ">=0.0.8.post2" },
 ]
 
 [package.metadata.requires-dev]

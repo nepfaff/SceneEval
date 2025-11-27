@@ -1,15 +1,14 @@
-"""Welded equilibrium metric using Drake physics simulation.
+"""Welded equilibrium metrics using Drake physics simulation.
 
-This metric is similar to StaticEquilibriumMetric but first detects penetrating
-object pairs and welds them to world before simulation. This prevents bias from
-objects moving apart due to initial penetration, isolating the stability
-measurement from penetration-induced movement.
+This module provides welded equilibrium metrics using Drake physics simulation
+with both CoACD and VHACD convex decomposition methods. These metrics first
+detect penetrating object pairs and weld them to world before simulation,
+preventing bias from penetration-induced movement.
 """
 
 import pathlib
-import tempfile
 from dataclasses import dataclass
-from pathlib import Path
+from typing import Literal
 
 import numpy as np
 
@@ -25,8 +24,8 @@ from .drake_utils import (
 
 
 @dataclass
-class WeldedEquilibriumMetricConfig:
-    """Configuration for the welded equilibrium metric.
+class WeldedEquilibriumMetricConfigCoACD:
+    """Configuration for the welded equilibrium metric using CoACD.
 
     Attributes:
         simulation_time: Time to simulate in seconds.
@@ -38,6 +37,7 @@ class WeldedEquilibriumMetricConfig:
         displacement_threshold: Maximum displacement for an object to be "stable" (meters).
         rotation_threshold: Maximum rotation for an object to be "stable" (radians).
         penetration_threshold: Penetration depth threshold for welding objects (meters).
+        save_simulation_html: If True, save meshcat visualization to HTML file.
     """
 
     simulation_time: float = 2.0
@@ -48,11 +48,37 @@ class WeldedEquilibriumMetricConfig:
     displacement_threshold: float = 0.01
     rotation_threshold: float = 0.1
     penetration_threshold: float = 0.001
+    save_simulation_html: bool = False
 
 
-@register_non_vlm_metric(config_class=WeldedEquilibriumMetricConfig)
-class WeldedEquilibriumMetric(BaseMetric):
-    """Metric to evaluate static equilibrium with welded penetrating objects.
+@dataclass
+class WeldedEquilibriumMetricConfigVHACD:
+    """Configuration for the welded equilibrium metric using VHACD.
+
+    Attributes:
+        simulation_time: Time to simulate in seconds.
+        time_step: Drake simulation time step.
+        use_trimesh_inertia: If True, compute mass/inertia from mesh volume.
+            If False, use default mass of 1kg.
+        density: Density in kg/m³ (only used if use_trimesh_inertia=True).
+        displacement_threshold: Maximum displacement for an object to be "stable" (meters).
+        rotation_threshold: Maximum rotation for an object to be "stable" (radians).
+        penetration_threshold: Penetration depth threshold for welding objects (meters).
+        save_simulation_html: If True, save meshcat visualization to HTML file.
+    """
+
+    simulation_time: float = 2.0
+    time_step: float = 0.01
+    use_trimesh_inertia: bool = False
+    density: float = 1000.0
+    displacement_threshold: float = 0.01
+    rotation_threshold: float = 0.1
+    penetration_threshold: float = 0.001
+    save_simulation_html: bool = False
+
+
+class WeldedEquilibriumMetricBase(BaseMetric):
+    """Base class for welded equilibrium metrics.
 
     This metric first detects objects that are penetrating each other using
     Drake's collision queries. Objects involved in ANY penetration are then
@@ -61,9 +87,14 @@ class WeldedEquilibriumMetric(BaseMetric):
     measurement from penetration-induced movement.
 
     The primary metric is mean_displacement (lower is better).
+    Subclasses specify which convex decomposition method to use.
     """
 
-    def __init__(self, scene: Scene, output_dir: pathlib.Path, cfg: WeldedEquilibriumMetricConfig, **kwargs) -> None:
+    # Subclasses must define these
+    decomposition_method: Literal["coacd", "vhacd"]
+    drake_scene_folder: str
+
+    def __init__(self, scene: Scene, output_dir: pathlib.Path, cfg, **kwargs) -> None:
         """Initialize the metric.
 
         Args:
@@ -85,18 +116,22 @@ class WeldedEquilibriumMetric(BaseMetric):
             MetricResult with equilibrium data including welded objects info.
         """
         # Use output directory for Drake files (persisted for debugging/inspection).
-        drake_scene_dir = self.output_dir / "drake_scene"
+        drake_scene_dir = self.output_dir / self.drake_scene_folder
         drake_scene_dir.mkdir(parents=True, exist_ok=True)
+
+        # Get coacd_threshold if applicable.
+        coacd_threshold = getattr(self.cfg, "coacd_threshold", 0.05)
 
         # Phase 1: Create Drake plant to detect penetrations.
         builder1, plant1, scene_graph1, obj_id_to_model_name = create_drake_plant_from_scene(
             scene=self.scene,
             time_step=0.0,  # Static query for penetration detection.
-            temp_dir=drake_scene_dir / "phase1",
+            temp_dir=drake_scene_dir / "penetration_detection",
             weld_to_world=[],
             use_trimesh_inertia=self.cfg.use_trimesh_inertia,
             density=self.cfg.density,
-            coacd_threshold=self.cfg.coacd_threshold,
+            coacd_threshold=coacd_threshold,
+            decomposition_method=self.decomposition_method,
         )
 
         # Build diagram and detect penetrations.
@@ -138,18 +173,26 @@ class WeldedEquilibriumMetric(BaseMetric):
         builder2, plant2, scene_graph2, obj_id_to_model_name2 = create_drake_plant_from_scene(
             scene=self.scene,
             time_step=self.cfg.time_step,  # Dynamics for simulation.
-            temp_dir=drake_scene_dir / "phase2",
+            temp_dir=drake_scene_dir / "simulation",
             weld_to_world=objects_to_weld,
             use_trimesh_inertia=self.cfg.use_trimesh_inertia,
             density=self.cfg.density,
-            coacd_threshold=self.cfg.coacd_threshold,
+            coacd_threshold=coacd_threshold,
+            decomposition_method=self.decomposition_method,
         )
+
+        # Determine HTML output path if visualization is enabled.
+        html_path = None
+        if getattr(self.cfg, "save_simulation_html", False):
+            html_path = drake_scene_dir / "simulation" / "simulation.html"
 
         # Run simulation.
         diagram2, initial_context, final_context = run_simulation(
             builder=builder2,
             plant=plant2,
             simulation_time=self.cfg.simulation_time,
+            scene_graph=scene_graph2,
+            output_html_path=html_path,
         )
 
         # Get plant contexts.
@@ -233,9 +276,10 @@ class WeldedEquilibriumMetric(BaseMetric):
         max_rotation = max(rotations) if rotations else 0.0
         mean_rotation = np.mean(rotations) if rotations else 0.0
 
+        method_name = self.decomposition_method.upper()
         result = MetricResult(
             message=(
-                f"Welded equilibrium: scene_stable={scene_stable}, "
+                f"Welded equilibrium ({method_name}): scene_stable={scene_stable}, "
                 f"{num_stable}/{num_non_welded} stable (non-welded) objects, "
                 f"{len(objects_to_weld)} welded objects, "
                 f"mean_displacement={mean_displacement:.4f}m, "
@@ -255,6 +299,8 @@ class WeldedEquilibriumMetric(BaseMetric):
                 "num_welded_objects": len(objects_to_weld),
                 "penetrating_pairs": penetrating_pairs_info,
                 "num_penetrating_pairs": len(penetrating_pairs_info),
+                # Decomposition method used.
+                "decomposition_method": self.decomposition_method,
             },
         )
 
@@ -273,3 +319,27 @@ class WeldedEquilibriumMetric(BaseMetric):
                 print(f"\nWelded objects (due to penetration): {objects_to_weld}")
 
         return result
+
+
+@register_non_vlm_metric(config_class=WeldedEquilibriumMetricConfigCoACD)
+class WeldedEquilibriumMetricCoACD(WeldedEquilibriumMetricBase):
+    """Welded equilibrium metric using CoACD convex decomposition.
+
+    CoACD (Convex Approximate Convex Decomposition) is used for generating
+    collision geometry for penetration detection and Drake physics simulation.
+    """
+
+    decomposition_method: Literal["coacd", "vhacd"] = "coacd"
+    drake_scene_folder: str = "welded_equilibrium_coacd"
+
+
+@register_non_vlm_metric(config_class=WeldedEquilibriumMetricConfigVHACD)
+class WeldedEquilibriumMetricVHACD(WeldedEquilibriumMetricBase):
+    """Welded equilibrium metric using VHACD convex decomposition.
+
+    VHACD (Volumetric Hierarchical Approximate Convex Decomposition) provides
+    an alternative decomposition method for penetration detection and physics.
+    """
+
+    decomposition_method: Literal["coacd", "vhacd"] = "vhacd"
+    drake_scene_folder: str = "welded_equilibrium_vhacd"

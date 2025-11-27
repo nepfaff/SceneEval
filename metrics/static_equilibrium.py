@@ -1,13 +1,14 @@
-"""Static equilibrium metric using Drake physics simulation.
+"""Static equilibrium metrics using Drake physics simulation.
 
-This metric simulates all objects in Drake and measures how much they move.
-Lower movement = better static equilibrium = more physically plausible scene.
+This module provides static equilibrium metrics using Drake physics simulation
+with both CoACD and VHACD convex decomposition methods. Lower movement after
+simulation = better static equilibrium = more physically plausible scene.
 """
 
 import json
 import pathlib
 from dataclasses import dataclass
-from pathlib import Path
+from typing import Literal
 
 import numpy as np
 
@@ -22,8 +23,8 @@ from .drake_utils import (
 
 
 @dataclass
-class StaticEquilibriumMetricConfig:
-    """Configuration for the static equilibrium metric.
+class StaticEquilibriumMetricConfigCoACD:
+    """Configuration for the static equilibrium metric using CoACD.
 
     Attributes:
         simulation_time: Time to simulate in seconds.
@@ -36,6 +37,7 @@ class StaticEquilibriumMetricConfig:
         rotation_threshold: Maximum rotation for an object to be "stable" (radians).
         weld_wall_ceiling_objects: If True, weld wall and ceiling mounted objects
             to world before simulation (requires obj_support_type_result.json).
+        save_simulation_html: If True, save meshcat visualization to HTML file.
     """
 
     simulation_time: float = 2.0
@@ -46,20 +48,52 @@ class StaticEquilibriumMetricConfig:
     displacement_threshold: float = 0.01
     rotation_threshold: float = 0.1
     weld_wall_ceiling_objects: bool = True
+    save_simulation_html: bool = False
 
 
-@register_non_vlm_metric(config_class=StaticEquilibriumMetricConfig)
-class StaticEquilibriumMetric(BaseMetric):
-    """Metric to evaluate static equilibrium using Drake physics simulation.
+@dataclass
+class StaticEquilibriumMetricConfigVHACD:
+    """Configuration for the static equilibrium metric using VHACD.
 
-    This metric loads a scene into Drake, simulates it for a specified time,
-    and measures how much each object moves. Objects that move less are
-    considered more stable and the scene is more physically plausible.
-
-    The primary metric is mean_displacement (lower is better).
+    Attributes:
+        simulation_time: Time to simulate in seconds.
+        time_step: Drake simulation time step.
+        use_trimesh_inertia: If True, compute mass/inertia from mesh volume.
+            If False, use default mass of 1kg.
+        density: Density in kg/m³ (only used if use_trimesh_inertia=True).
+        displacement_threshold: Maximum displacement for an object to be "stable" (meters).
+        rotation_threshold: Maximum rotation for an object to be "stable" (radians).
+        weld_wall_ceiling_objects: If True, weld wall and ceiling mounted objects
+            to world before simulation (requires obj_support_type_result.json).
+        save_simulation_html: If True, save meshcat visualization to HTML file.
     """
 
-    def __init__(self, scene: Scene, output_dir: pathlib.Path, cfg: StaticEquilibriumMetricConfig, **kwargs) -> None:
+    simulation_time: float = 2.0
+    time_step: float = 0.01
+    use_trimesh_inertia: bool = False
+    density: float = 1000.0
+    displacement_threshold: float = 0.01
+    rotation_threshold: float = 0.1
+    weld_wall_ceiling_objects: bool = True
+    save_simulation_html: bool = False
+
+
+class StaticEquilibriumMetricBase(BaseMetric):
+    """Base class for static equilibrium metrics.
+
+    Loads a scene into Drake, simulates it for a specified time, and measures
+    how much each object moves. Objects that move less are considered more
+    stable and the scene is more physically plausible.
+
+    The primary metric is mean_displacement (lower is better).
+    Subclasses specify which convex decomposition method to use.
+    """
+
+    # Subclasses must define these
+    decomposition_method: Literal["coacd", "vhacd"]
+    drake_scene_folder: str
+
+    def __init__(self, scene: Scene, output_dir: pathlib.Path, cfg, **kwargs) -> None:
         """Initialize the metric.
 
         Args:
@@ -101,7 +135,7 @@ class StaticEquilibriumMetric(BaseMetric):
             MetricResult with equilibrium data.
         """
         # Use output directory for Drake files (persisted for debugging/inspection).
-        drake_scene_dir = self.output_dir / "drake_scene"
+        drake_scene_dir = self.output_dir / self.drake_scene_folder
         drake_scene_dir.mkdir(parents=True, exist_ok=True)
 
         # Get wall/ceiling objects to weld (if enabled).
@@ -111,22 +145,33 @@ class StaticEquilibriumMetric(BaseMetric):
             if verbose and objects_to_weld:
                 print(f"Welding wall/ceiling objects: {objects_to_weld}")
 
+        # Get coacd_threshold if applicable.
+        coacd_threshold = getattr(self.cfg, "coacd_threshold", 0.05)
+
         # Create Drake plant with dynamics (time_step > 0).
         builder, plant, scene_graph, obj_id_to_model_name = create_drake_plant_from_scene(
             scene=self.scene,
             time_step=self.cfg.time_step,
-            temp_dir=drake_scene_dir,
+            temp_dir=drake_scene_dir / "simulation",
             weld_to_world=objects_to_weld,
             use_trimesh_inertia=self.cfg.use_trimesh_inertia,
             density=self.cfg.density,
-            coacd_threshold=self.cfg.coacd_threshold,
+            coacd_threshold=coacd_threshold,
+            decomposition_method=self.decomposition_method,
         )
+
+        # Determine HTML output path if visualization is enabled.
+        html_path = None
+        if getattr(self.cfg, "save_simulation_html", False):
+            html_path = drake_scene_dir / "simulation" / "simulation.html"
 
         # Run simulation.
         diagram, initial_context, final_context = run_simulation(
             builder=builder,
             plant=plant,
             simulation_time=self.cfg.simulation_time,
+            scene_graph=scene_graph,
+            output_html_path=html_path,
         )
 
         # Get plant contexts.
@@ -211,9 +256,10 @@ class StaticEquilibriumMetric(BaseMetric):
         max_rotation = max(rotations) if rotations else 0.0
         mean_rotation = np.mean(rotations) if rotations else 0.0
 
+        method_name = self.decomposition_method.upper()
         result = MetricResult(
             message=(
-                f"Static equilibrium: scene_stable={scene_stable}, "
+                f"Static equilibrium ({method_name}): scene_stable={scene_stable}, "
                 f"{num_stable}/{num_non_welded} stable (non-welded) objects, "
                 f"{len(objects_to_weld)} welded (wall/ceiling), "
                 f"mean_displacement={mean_displacement:.4f}m, "
@@ -231,6 +277,8 @@ class StaticEquilibriumMetric(BaseMetric):
                 "per_object_results": per_object_results,
                 "welded_objects": objects_to_weld,
                 "num_welded_objects": len(objects_to_weld),
+                # Decomposition method used.
+                "decomposition_method": self.decomposition_method,
             },
         )
 
@@ -249,3 +297,27 @@ class StaticEquilibriumMetric(BaseMetric):
                 print(f"\nWelded objects (wall/ceiling mounted): {objects_to_weld}")
 
         return result
+
+
+@register_non_vlm_metric(config_class=StaticEquilibriumMetricConfigCoACD)
+class StaticEquilibriumMetricCoACD(StaticEquilibriumMetricBase):
+    """Static equilibrium metric using CoACD convex decomposition.
+
+    CoACD (Convex Approximate Convex Decomposition) is used for generating
+    collision geometry for Drake physics simulation.
+    """
+
+    decomposition_method: Literal["coacd", "vhacd"] = "coacd"
+    drake_scene_folder: str = "static_equilibrium_coacd"
+
+
+@register_non_vlm_metric(config_class=StaticEquilibriumMetricConfigVHACD)
+class StaticEquilibriumMetricVHACD(StaticEquilibriumMetricBase):
+    """Static equilibrium metric using VHACD convex decomposition.
+
+    VHACD (Volumetric Hierarchical Approximate Convex Decomposition) provides
+    an alternative decomposition method for Drake physics simulation.
+    """
+
+    decomposition_method: Literal["coacd", "vhacd"] = "vhacd"
+    drake_scene_folder: str = "static_equilibrium_vhacd"

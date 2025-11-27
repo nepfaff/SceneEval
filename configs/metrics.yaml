@@ -128,11 +128,17 @@ metrics: # Use metric class names as keys (i.e., CamelCase)
     window_room_side_only: True
     window_front_extrude_distance: 0.5
 
-  DrakeCollisionMetric:
+  # Drake collision metrics (CoACD variant)
+  DrakeCollisionMetricCoACD:
     penetration_threshold: 0.001
     coacd_threshold: 0.05
 
-  StaticEquilibriumMetric:
+  # Drake collision metrics (VHACD variant)
+  DrakeCollisionMetricVHACD:
+    penetration_threshold: 0.001
+
+  # Static equilibrium metrics (CoACD variant)
+  StaticEquilibriumMetricCoACD:
     simulation_time: 5.0
     time_step: 1.0e-3
     use_trimesh_inertia: false
@@ -141,12 +147,32 @@ metrics: # Use metric class names as keys (i.e., CamelCase)
     displacement_threshold: 0.01
     rotation_threshold: 0.1
 
-  WeldedEquilibriumMetric:
+  # Static equilibrium metrics (VHACD variant)
+  StaticEquilibriumMetricVHACD:
+    simulation_time: 5.0
+    time_step: 1.0e-3
+    use_trimesh_inertia: false
+    density: 1000.0
+    displacement_threshold: 0.01
+    rotation_threshold: 0.1
+
+  # Welded equilibrium metrics (CoACD variant)
+  WeldedEquilibriumMetricCoACD:
     simulation_time: 5.0
     time_step: 1.0e-3
     use_trimesh_inertia: false
     density: 1000.0
     coacd_threshold: 0.05
+    displacement_threshold: 0.01
+    rotation_threshold: 0.1
+    penetration_threshold: 0.001
+
+  # Welded equilibrium metrics (VHACD variant)
+  WeldedEquilibriumMetricVHACD:
+    simulation_time: 5.0
+    time_step: 1.0e-3
+    use_trimesh_inertia: false
+    density: 1000.0
     displacement_threshold: 0.01
     rotation_threshold: 0.1
     penetration_threshold: 0.001

@@ -10,9 +10,24 @@ from .navigability import NavigabilityMetric, NavigabilityMetricConfig
 from .accessibility import AccessibilityMetric, AccessibilityMetricConfig
 from .out_of_bound import OutOfBoundMetric, OutOfBoundMetricConfig
 from .opening_clearance import OpeningClearanceMetric, OpeningClearanceMetricConfig
-from .drake_collision import DrakeCollisionMetric, DrakeCollisionMetricConfig
-from .static_equilibrium import StaticEquilibriumMetric, StaticEquilibriumMetricConfig
-from .welded_equilibrium import WeldedEquilibriumMetric, WeldedEquilibriumMetricConfig
+from .drake_collision import (
+    DrakeCollisionMetricCoACD,
+    DrakeCollisionMetricConfigCoACD,
+    DrakeCollisionMetricVHACD,
+    DrakeCollisionMetricConfigVHACD,
+)
+from .static_equilibrium import (
+    StaticEquilibriumMetricCoACD,
+    StaticEquilibriumMetricConfigCoACD,
+    StaticEquilibriumMetricVHACD,
+    StaticEquilibriumMetricConfigVHACD,
+)
+from .welded_equilibrium import (
+    WeldedEquilibriumMetricCoACD,
+    WeldedEquilibriumMetricConfigCoACD,
+    WeldedEquilibriumMetricVHACD,
+    WeldedEquilibriumMetricConfigVHACD,
+)
 
 from .registry import MetricRegistry, register_non_vlm_metric, register_vlm_metric
 
@@ -37,12 +52,21 @@ __all__ = [
     "OutOfBoundMetricConfig",
     "OpeningClearanceMetric",
     "OpeningClearanceMetricConfig",
-    "DrakeCollisionMetric",
-    "DrakeCollisionMetricConfig",
-    "StaticEquilibriumMetric",
-    "StaticEquilibriumMetricConfig",
-    "WeldedEquilibriumMetric",
-    "WeldedEquilibriumMetricConfig",
+    # Drake collision metrics (CoACD and VHACD variants)
+    "DrakeCollisionMetricCoACD",
+    "DrakeCollisionMetricConfigCoACD",
+    "DrakeCollisionMetricVHACD",
+    "DrakeCollisionMetricConfigVHACD",
+    # Static equilibrium metrics (CoACD and VHACD variants)
+    "StaticEquilibriumMetricCoACD",
+    "StaticEquilibriumMetricConfigCoACD",
+    "StaticEquilibriumMetricVHACD",
+    "StaticEquilibriumMetricConfigVHACD",
+    # Welded equilibrium metrics (CoACD and VHACD variants)
+    "WeldedEquilibriumMetricCoACD",
+    "WeldedEquilibriumMetricConfigCoACD",
+    "WeldedEquilibriumMetricVHACD",
+    "WeldedEquilibriumMetricConfigVHACD",
 
     # Registry components
     "MetricRegistry",

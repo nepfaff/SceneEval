@@ -223,23 +223,26 @@ This approach matches SceneWeaver's own object counting methodology (`Nobj_uniqu
 
 ## Drake Physics Metrics
 
-SceneEval includes physics-based metrics using [Drake](https://drake.mit.edu/) for more accurate collision detection and stability analysis.
+SceneEval includes physics-based metrics using [Drake](https://drake.mit.edu/) for more accurate collision detection and stability analysis. Each metric is available with two convex decomposition methods:
+
+- **CoACD** ([Convex Approximate Convex Decomposition](https://github.com/SarahWeiii/CoACD)) - Adaptive decomposition, typically more accurate but slower
+- **VHACD** (Volumetric Hierarchical Approximate Convex Decomposition) - Fixed 64 convex pieces, faster but may miss fine details
 
 ### Available Metrics
 
 | Metric | Description |
 |--------|-------------|
-| **DrakeCollisionMetric** | Detects collisions using [CoACD](https://github.com/SarahWeiii/CoACD) convex decomposition for physics-accurate collision geometry. More accurate than trimesh-based collision for physics simulation. |
-| **StaticEquilibriumMetric** | Runs physics simulation and measures object displacement. Lower displacement = better stability. |
-| **WeldedEquilibriumMetric** | Detects penetrating objects, welds them to the world, then simulates. Isolates stability issues from penetration-induced movement. |
+| **DrakeCollisionMetricCoACD** / **DrakeCollisionMetricVHACD** | Detects collisions using convex decomposition for physics-accurate collision geometry. |
+| **StaticEquilibriumMetricCoACD** / **StaticEquilibriumMetricVHACD** | Runs physics simulation and measures object displacement. Lower displacement = better stability. |
+| **WeldedEquilibriumMetricCoACD** / **WeldedEquilibriumMetricVHACD** | Detects penetrating objects, welds them to the world, then simulates. Isolates stability issues from penetration-induced movement. |
 
 ### Why Drake-based Collision Detection?
 
-The original `CollisionMetric` uses trimesh intersection which checks exact mesh geometry. However, physics simulators like Drake use **convex collision geometry** (via CoACD decomposition), which can slightly inflate meshes. `DrakeCollisionMetric` detects collisions that would actually occur in physics simulation.
+The original `CollisionMetric` uses trimesh intersection which checks exact mesh geometry. However, physics simulators like Drake use **convex collision geometry** (via CoACD/VHACD decomposition), which can slightly inflate meshes. Drake metrics detect collisions that would actually occur in physics simulation.
 
 ### Output Statistics
 
-`DrakeCollisionMetric` reports:
+`DrakeCollisionMetric*` reports:
 - `max_penetration_depth` - Maximum penetration depth across all collision pairs
 - `min_penetration_depth` - Minimum penetration depth
 - `mean_penetration_depth` - Average penetration depth
@@ -247,24 +250,73 @@ The original `CollisionMetric` uses trimesh intersection which checks exact mesh
 - `num_collision_pairs` - Number of unique colliding object pairs
 - `num_obj_in_collision` - Number of objects involved in collisions
 
-`StaticEquilibriumMetric` and `WeldedEquilibriumMetric` report:
+`StaticEquilibriumMetric*` and `WeldedEquilibriumMetric*` report:
 - `scene_stable` - Whether all objects are stable (displacement < threshold)
 - `mean_displacement` - Average object displacement after simulation
 - `max_displacement` - Maximum object displacement
 - `per_object_results` - Displacement and rotation per object
 
+### HTML Visualization for Debugging
+
+The equilibrium metrics can export interactive Meshcat visualizations as HTML files. This is useful for debugging physics issues like objects flying away unexpectedly.
+
+```bash
+# Enable HTML visualization for a specific metric
+python main.py \
+    'evaluation_plan.input_cfg.scene_methods=[LayoutVLM]' \
+    'evaluation_plan.evaluation_cfg.metrics=[WeldedEquilibriumMetricVHACD]' \
+    '+metrics.WeldedEquilibriumMetricVHACD.save_simulation_html=true'
+```
+
+This saves interactive HTML files to metric-specific folders:
+- `static_equilibrium_vhacd/simulation/simulation.html` - StaticEquilibrium simulation
+- `welded_equilibrium_vhacd/simulation/simulation.html` - WeldedEquilibrium simulation
+
+Each metric has its own output folder:
+```
+output_eval/<Method>/<scene>/
+├── drake_collision_coacd/          # DrakeCollisionMetricCoACD
+├── drake_collision_vhacd/          # DrakeCollisionMetricVHACD
+├── static_equilibrium_coacd/       # StaticEquilibriumMetricCoACD
+│   └── simulation/
+│       └── simulation.html
+├── static_equilibrium_vhacd/       # StaticEquilibriumMetricVHACD
+│   └── simulation/
+│       └── simulation.html
+├── welded_equilibrium_coacd/       # WeldedEquilibriumMetricCoACD
+│   ├── penetration_detection/      # Static scene for detecting collisions
+│   └── simulation/                 # Dynamic simulation with colliding objects welded
+│       └── simulation.html
+└── welded_equilibrium_vhacd/       # WeldedEquilibriumMetricVHACD
+    ├── penetration_detection/
+    └── simulation/
+        └── simulation.html
+```
+
+Open the HTML in a browser to:
+1. View the scene with convex collision geometry
+2. Play back the simulation timeline
+3. Identify objects that move unexpectedly
+
 ### Usage
 
 ```bash
-# Run Drake collision metric
+# Run all Drake physics metrics (both CoACD and VHACD)
 python main.py \
     'evaluation_plan.input_cfg.scene_methods=[LayoutVLM]' \
-    'evaluation_plan.evaluation_cfg.metrics=[DrakeCollisionMetric]'
+    'evaluation_plan.evaluation_cfg.metrics=[DrakeCollisionMetricCoACD,DrakeCollisionMetricVHACD,StaticEquilibriumMetricCoACD,StaticEquilibriumMetricVHACD,WeldedEquilibriumMetricCoACD,WeldedEquilibriumMetricVHACD]'
 
-# Run all Drake physics metrics
+# Run only VHACD variants (faster)
 python main.py \
     'evaluation_plan.input_cfg.scene_methods=[LayoutVLM]' \
-    'evaluation_plan.evaluation_cfg.metrics=[DrakeCollisionMetric,StaticEquilibriumMetric,WeldedEquilibriumMetric]'
+    'evaluation_plan.evaluation_cfg.metrics=[DrakeCollisionMetricVHACD,StaticEquilibriumMetricVHACD,WeldedEquilibriumMetricVHACD]'
+
+# Enable HTML visualization for all equilibrium metrics
+python main.py \
+    'evaluation_plan.input_cfg.scene_methods=[LayoutVLM]' \
+    'evaluation_plan.evaluation_cfg.metrics=[StaticEquilibriumMetricVHACD,WeldedEquilibriumMetricVHACD]' \
+    '+metrics.StaticEquilibriumMetricVHACD.save_simulation_html=true' \
+    '+metrics.WeldedEquilibriumMetricVHACD.save_simulation_html=true'
 ```
 
 

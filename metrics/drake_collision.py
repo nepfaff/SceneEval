@@ -1,17 +1,15 @@
-"""Drake-based collision metric using CoACD collision geometry.
+"""Drake-based collision metrics using convex decomposition.
 
-This metric detects collisions using Drake's collision geometry (CoACD convex
-pieces). This is more accurate for physics simulation purposes than trimesh-based
-collision detection since CoACD often inflates meshes to ensure convexity. These
-are the collisions that actually matter in Drake physics simulation.
+This module provides collision detection metrics using Drake's collision geometry
+with both CoACD and VHACD convex decomposition methods. These are more accurate
+for physics simulation purposes than trimesh-based collision detection.
 """
 
 import pathlib
-import shutil
 import statistics
-import tempfile
+from abc import abstractmethod
 from dataclasses import dataclass
-from pathlib import Path
+from typing import Literal
 
 from scenes import Scene
 from .base import BaseMetric, MetricResult
@@ -23,8 +21,8 @@ from .drake_utils import (
 
 
 @dataclass
-class DrakeCollisionMetricConfig:
-    """Configuration for the Drake collision metric.
+class DrakeCollisionMetricConfigCoACD:
+    """Configuration for the Drake collision metric using CoACD.
 
     Attributes:
         penetration_threshold: Minimum penetration depth to report (meters).
@@ -35,17 +33,29 @@ class DrakeCollisionMetricConfig:
     coacd_threshold: float = 0.05
 
 
-@register_non_vlm_metric(config_class=DrakeCollisionMetricConfig)
-class DrakeCollisionMetric(BaseMetric):
-    """Metric to evaluate object collision using Drake's CoACD collision geometry.
+@dataclass
+class DrakeCollisionMetricConfigVHACD:
+    """Configuration for the Drake collision metric using VHACD.
 
-    Unlike the trimesh-based CollisionMetric, this uses Drake's collision
-    geometry which is based on CoACD convex decomposition. CoACD often
-    inflates meshes to ensure convexity, so collisions detected here are
-    the ones that will actually cause objects to move in physics simulation.
+    Attributes:
+        penetration_threshold: Minimum penetration depth to report (meters).
     """
 
-    def __init__(self, scene: Scene, output_dir: pathlib.Path, cfg: DrakeCollisionMetricConfig, **kwargs) -> None:
+    penetration_threshold: float = 0.001
+
+
+class DrakeCollisionMetricBase(BaseMetric):
+    """Base class for Drake collision metrics.
+
+    Detects collisions using Drake's collision geometry with convex decomposition.
+    Subclasses specify which decomposition method to use.
+    """
+
+    # Subclasses must define these
+    decomposition_method: Literal["coacd", "vhacd"]
+    drake_scene_folder: str
+
+    def __init__(self, scene: Scene, output_dir: pathlib.Path, cfg, **kwargs) -> None:
         """Initialize the metric.
 
         Args:
@@ -67,8 +77,11 @@ class DrakeCollisionMetric(BaseMetric):
             MetricResult with collision data.
         """
         # Use output directory for Drake files (persisted for debugging/inspection).
-        drake_scene_dir = self.output_dir / "drake_scene"
+        drake_scene_dir = self.output_dir / self.drake_scene_folder
         drake_scene_dir.mkdir(parents=True, exist_ok=True)
+
+        # Get coacd_threshold if applicable.
+        coacd_threshold = getattr(self.cfg, "coacd_threshold", 0.05)
 
         # Create Drake plant (time_step=0 for static collision query).
         builder, plant, scene_graph, obj_id_to_model_name = create_drake_plant_from_scene(
@@ -77,7 +90,8 @@ class DrakeCollisionMetric(BaseMetric):
             temp_dir=drake_scene_dir,
             weld_to_world=[],
             use_trimesh_inertia=False,
-            coacd_threshold=self.cfg.coacd_threshold,
+            coacd_threshold=coacd_threshold,
+            decomposition_method=self.decomposition_method,
         )
 
         # Build diagram and create context.
@@ -185,9 +199,10 @@ class DrakeCollisionMetric(BaseMetric):
         max_floor_penetration = max(floor_depths) if floor_depths else 0.0
         mean_floor_penetration = sum(floor_depths) / len(floor_depths) if floor_depths else 0.0
 
+        method_name = self.decomposition_method.upper()
         result = MetricResult(
             message=(
-                f"Drake collision: scene_in_collision={scene_in_collision}, "
+                f"Drake collision ({method_name}): scene_in_collision={scene_in_collision}, "
                 f"{num_obj_in_collision}/{len(self.scene.get_obj_ids())} objects in collision, "
                 f"{num_collision_pairs} collision pairs, "
                 f"max_depth={max_penetration_depth:.4f}m; "
@@ -208,6 +223,8 @@ class DrakeCollisionMetric(BaseMetric):
                 "max_floor_penetration_depth": max_floor_penetration,
                 "mean_floor_penetration_depth": mean_floor_penetration,
                 "floor_collision_results": floor_collision_results,
+                # Decomposition method used.
+                "decomposition_method": self.decomposition_method,
             },
         )
 
@@ -215,3 +232,29 @@ class DrakeCollisionMetric(BaseMetric):
             print(f"\n{result.message}\n")
 
         return result
+
+
+@register_non_vlm_metric(config_class=DrakeCollisionMetricConfigCoACD)
+class DrakeCollisionMetricCoACD(DrakeCollisionMetricBase):
+    """Drake collision metric using CoACD convex decomposition.
+
+    CoACD (Convex Approximate Convex Decomposition) often inflates meshes
+    to ensure convexity, so collisions detected here are the ones that
+    will actually cause objects to move in Drake physics simulation.
+    """
+
+    decomposition_method: Literal["coacd", "vhacd"] = "coacd"
+    drake_scene_folder: str = "drake_collision_coacd"
+
+
+@register_non_vlm_metric(config_class=DrakeCollisionMetricConfigVHACD)
+class DrakeCollisionMetricVHACD(DrakeCollisionMetricBase):
+    """Drake collision metric using VHACD convex decomposition.
+
+    VHACD (Volumetric Hierarchical Approximate Convex Decomposition) provides
+    an alternative decomposition method that may produce different collision
+    geometry compared to CoACD.
+    """
+
+    decomposition_method: Literal["coacd", "vhacd"] = "vhacd"
+    drake_scene_folder: str = "drake_collision_vhacd"

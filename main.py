@@ -396,6 +396,9 @@ def main(cfg: DictConfig) -> None:
             # (GLB exports have texture baking issues, original blend has perfect materials)
             if method == "SceneWeaver":
                 _copy_and_render_original_sceneweaver_blend(scene, method_scene_file, output_dir)
+                # Recreate scene after rendering original blend - the bpy.ops.wm.open_mainfile()
+                # call invalidates all Blender object references in the Scene object
+                scene = Scene(mesh_retriever, scene_state, scene_cfg, blender_cfg, trimesh_cfg, output_dir)
 
             # If no_eval and not semantic_render, can skip the rest
             if evaluation_plan.evaluation_cfg.no_eval and not evaluation_plan.render_cfg.semantic_render_tasks:

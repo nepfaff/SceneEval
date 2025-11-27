@@ -12,10 +12,14 @@ evaluation_cfg:
     - NavigabilityMetric
     - OutOfBoundMetric
     - OpeningClearanceMetric
-    # Drake physics metrics:
-    - DrakeCollisionMetric
-    - StaticEquilibriumMetric
-    - WeldedEquilibriumMetric
+    # Drake physics metrics (CoACD):
+    - DrakeCollisionMetricCoACD
+    - StaticEquilibriumMetricCoACD
+    - WeldedEquilibriumMetricCoACD
+    # Drake physics metrics (VHACD):
+    - DrakeCollisionMetricVHACD
+    - StaticEquilibriumMetricVHACD
+    - WeldedEquilibriumMetricVHACD
   output_dir: ./output_eval
   save_blend_file: True
   vlm: GPT
