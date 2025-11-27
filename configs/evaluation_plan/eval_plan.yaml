@@ -1,15 +1,21 @@
 evaluation_cfg:
   metrics:
+    # VLM-based metrics:
     - ObjCountMetric
     - ObjAttributeMetric
     - ObjObjRelationshipMetric
     - ObjArchRelationshipMetric
-    - CollisionMetric
     - SupportMetric
-    - NavigabilityMetric
     - AccessibilityMetric
+    # Non-VLM metrics:
+    - CollisionMetric
+    - NavigabilityMetric
     - OutOfBoundMetric
     - OpeningClearanceMetric
+    # Drake physics metrics:
+    - DrakeCollisionMetric
+    - StaticEquilibriumMetric
+    - WeldedEquilibriumMetric
   output_dir: ./output_eval
   save_blend_file: True
   vlm: GPT

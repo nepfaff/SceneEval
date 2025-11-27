@@ -1,20 +1,26 @@
 evaluation_cfg:
   metrics:
-    # - ObjCountMetric
-    # - ObjAttributeMetric
-    # - ObjObjRelationshipMetric
-    # - ObjArchRelationshipMetric
+    # VLM-based metrics (require matching result):
+    - ObjCountMetric
+    - ObjAttributeMetric
+    - ObjObjRelationshipMetric
+    - ObjArchRelationshipMetric
+    - SupportMetric
+    - AccessibilityMetric
+    # Non-VLM metrics:
     - CollisionMetric
-    # - SupportMetric
     - NavigabilityMetric
-    # - AccessibilityMetric
     - OutOfBoundMetric
     - OpeningClearanceMetric
+    # Drake physics metrics:
+    - DrakeCollisionMetric
+    - StaticEquilibriumMetric
+    - WeldedEquilibriumMetric
   output_dir: ./output_eval
   save_blend_file: True
   vlm: GPT
   use_existing_matching: True
-  use_empty_matching_result: True
+  use_empty_matching_result: False
   support_metric_use_existing_support_type_assessment: False
   no_eval: False
   verbose: False
@@ -40,7 +46,7 @@ render_cfg:
     - scene_top
     - obj_solo
     # - obj_size
-    # - obj_surroundings
+    - obj_surroundings
     # - obj_global_top
   semantic_render_tasks:
     # - scene_top

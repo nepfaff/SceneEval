@@ -1,0 +1,251 @@
+"""Static equilibrium metric using Drake physics simulation.
+
+This metric simulates all objects in Drake and measures how much they move.
+Lower movement = better static equilibrium = more physically plausible scene.
+"""
+
+import json
+import pathlib
+from dataclasses import dataclass
+from pathlib import Path
+
+import numpy as np
+
+from scenes import Scene
+from .base import BaseMetric, MetricResult
+from .registry import register_non_vlm_metric
+from .drake_utils import (
+    create_drake_plant_from_scene,
+    measure_displacement,
+    run_simulation,
+)
+
+
+@dataclass
+class StaticEquilibriumMetricConfig:
+    """Configuration for the static equilibrium metric.
+
+    Attributes:
+        simulation_time: Time to simulate in seconds.
+        time_step: Drake simulation time step.
+        use_trimesh_inertia: If True, compute mass/inertia from mesh volume.
+            If False, use default mass of 1kg.
+        density: Density in kg/m³ (only used if use_trimesh_inertia=True).
+        coacd_threshold: CoACD decomposition threshold.
+        displacement_threshold: Maximum displacement for an object to be "stable" (meters).
+        rotation_threshold: Maximum rotation for an object to be "stable" (radians).
+        weld_wall_ceiling_objects: If True, weld wall and ceiling mounted objects
+            to world before simulation (requires obj_support_type_result.json).
+    """
+
+    simulation_time: float = 2.0
+    time_step: float = 0.01
+    use_trimesh_inertia: bool = False
+    density: float = 1000.0
+    coacd_threshold: float = 0.05
+    displacement_threshold: float = 0.01
+    rotation_threshold: float = 0.1
+    weld_wall_ceiling_objects: bool = True
+
+
+@register_non_vlm_metric(config_class=StaticEquilibriumMetricConfig)
+class StaticEquilibriumMetric(BaseMetric):
+    """Metric to evaluate static equilibrium using Drake physics simulation.
+
+    This metric loads a scene into Drake, simulates it for a specified time,
+    and measures how much each object moves. Objects that move less are
+    considered more stable and the scene is more physically plausible.
+
+    The primary metric is mean_displacement (lower is better).
+    """
+
+    def __init__(self, scene: Scene, output_dir: pathlib.Path, cfg: StaticEquilibriumMetricConfig, **kwargs) -> None:
+        """Initialize the metric.
+
+        Args:
+            scene: The scene to evaluate.
+            output_dir: Output directory for saving Drake scene files.
+            cfg: The configuration for the metric.
+        """
+        self.scene = scene
+        self.output_dir = output_dir
+        self.cfg = cfg
+
+    def _get_wall_ceiling_objects(self) -> list[str]:
+        """Get object IDs for wall and ceiling mounted objects.
+
+        Returns:
+            List of object IDs that are mounted on walls or ceilings.
+        """
+        support_type_file = self.scene.output_dir / "obj_support_type_result.json"
+        if not support_type_file.exists():
+            return []
+
+        with open(support_type_file) as f:
+            support_types = json.load(f)
+
+        wall_ceiling_objects = []
+        for obj_id, support_type in support_types.items():
+            if support_type in ("wall", "ceiling"):
+                wall_ceiling_objects.append(obj_id)
+
+        return wall_ceiling_objects
+
+    def run(self, verbose: bool = False) -> MetricResult:
+        """Run the metric.
+
+        Args:
+            verbose: Whether to print verbose output.
+
+        Returns:
+            MetricResult with equilibrium data.
+        """
+        # Use output directory for Drake files (persisted for debugging/inspection).
+        drake_scene_dir = self.output_dir / "drake_scene"
+        drake_scene_dir.mkdir(parents=True, exist_ok=True)
+
+        # Get wall/ceiling objects to weld (if enabled).
+        objects_to_weld = []
+        if self.cfg.weld_wall_ceiling_objects:
+            objects_to_weld = self._get_wall_ceiling_objects()
+            if verbose and objects_to_weld:
+                print(f"Welding wall/ceiling objects: {objects_to_weld}")
+
+        # Create Drake plant with dynamics (time_step > 0).
+        builder, plant, scene_graph, obj_id_to_model_name = create_drake_plant_from_scene(
+            scene=self.scene,
+            time_step=self.cfg.time_step,
+            temp_dir=drake_scene_dir,
+            weld_to_world=objects_to_weld,
+            use_trimesh_inertia=self.cfg.use_trimesh_inertia,
+            density=self.cfg.density,
+            coacd_threshold=self.cfg.coacd_threshold,
+        )
+
+        # Run simulation.
+        diagram, initial_context, final_context = run_simulation(
+            builder=builder,
+            plant=plant,
+            simulation_time=self.cfg.simulation_time,
+        )
+
+        # Get plant contexts.
+        initial_plant_context = plant.GetMyContextFromRoot(initial_context)
+        final_plant_context = plant.GetMyContextFromRoot(final_context)
+
+        # Measure displacement for non-welded objects only.
+        non_welded_obj_id_to_model_name = {
+            obj_id: model_name
+            for obj_id, model_name in obj_id_to_model_name.items()
+            if obj_id not in objects_to_weld
+        }
+
+        displacement_results = measure_displacement(
+            plant=plant,
+            initial_context=initial_plant_context,
+            final_context=final_plant_context,
+            obj_id_to_model_name=non_welded_obj_id_to_model_name,
+        )
+
+        # Compute per-object stability and aggregate statistics.
+        per_object_results = {}
+        displacements = []
+        rotations = []
+
+        # Process non-welded objects.
+        for obj_id, data in displacement_results.items():
+            displacement = data["displacement"]
+            rotation = data["rotation"]
+
+            # Check if stable (within thresholds).
+            stable = (
+                not np.isnan(displacement)
+                and not np.isnan(rotation)
+                and displacement <= self.cfg.displacement_threshold
+                and rotation <= self.cfg.rotation_threshold
+            )
+
+            per_object_results[obj_id] = {
+                "stable": stable,
+                "displacement": displacement,
+                "rotation": rotation,
+                "initial_position": data["initial_position"],
+                "final_position": data["final_position"],
+                "welded": False,
+            }
+
+            # Collect valid values for statistics.
+            if not np.isnan(displacement):
+                displacements.append(displacement)
+            if not np.isnan(rotation):
+                rotations.append(rotation)
+
+        # Add welded objects (they have zero displacement by definition).
+        for obj_id in objects_to_weld:
+            per_object_results[obj_id] = {
+                "stable": True,  # Welded objects don't move.
+                "displacement": 0.0,
+                "rotation": 0.0,
+                "initial_position": None,
+                "final_position": None,
+                "welded": True,
+                "weld_reason": "wall_ceiling_mounted",
+            }
+
+        # Compute aggregate statistics (only for non-welded objects).
+        num_stable = sum(
+            1 for r in per_object_results.values()
+            if r["stable"] and not r.get("welded", False)
+        )
+        num_unstable = sum(
+            1 for r in per_object_results.values()
+            if not r["stable"] and not r.get("welded", False)
+        )
+        num_non_welded = num_stable + num_unstable
+        scene_stable = num_unstable == 0
+
+        max_displacement = max(displacements) if displacements else 0.0
+        mean_displacement = np.mean(displacements) if displacements else 0.0
+        total_displacement = sum(displacements)
+
+        max_rotation = max(rotations) if rotations else 0.0
+        mean_rotation = np.mean(rotations) if rotations else 0.0
+
+        result = MetricResult(
+            message=(
+                f"Static equilibrium: scene_stable={scene_stable}, "
+                f"{num_stable}/{num_non_welded} stable (non-welded) objects, "
+                f"{len(objects_to_weld)} welded (wall/ceiling), "
+                f"mean_displacement={mean_displacement:.4f}m, "
+                f"max_displacement={max_displacement:.4f}m"
+            ),
+            data={
+                "scene_stable": scene_stable,
+                "num_stable_objects": num_stable,
+                "num_unstable_objects": num_unstable,
+                "max_displacement": float(max_displacement),
+                "mean_displacement": float(mean_displacement),
+                "max_rotation": float(max_rotation),
+                "mean_rotation": float(mean_rotation),
+                "total_displacement": float(total_displacement),
+                "per_object_results": per_object_results,
+                "welded_objects": objects_to_weld,
+                "num_welded_objects": len(objects_to_weld),
+            },
+        )
+
+        if verbose:
+            print(f"\n{result.message}\n")
+            print("Non-welded objects:")
+            for obj_id, obj_result in per_object_results.items():
+                if not obj_result.get("welded", False):
+                    status = "STABLE" if obj_result["stable"] else "UNSTABLE"
+                    print(
+                        f"  {obj_id}: {status} "
+                        f"(displacement={obj_result['displacement']:.4f}m, "
+                        f"rotation={obj_result['rotation']:.4f}rad)"
+                    )
+            if objects_to_weld:
+                print(f"\nWelded objects (wall/ceiling mounted): {objects_to_weld}")
+
+        return result

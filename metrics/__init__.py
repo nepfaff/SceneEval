@@ -10,6 +10,9 @@ from .navigability import NavigabilityMetric, NavigabilityMetricConfig
 from .accessibility import AccessibilityMetric, AccessibilityMetricConfig
 from .out_of_bound import OutOfBoundMetric, OutOfBoundMetricConfig
 from .opening_clearance import OpeningClearanceMetric, OpeningClearanceMetricConfig
+from .drake_collision import DrakeCollisionMetric, DrakeCollisionMetricConfig
+from .static_equilibrium import StaticEquilibriumMetric, StaticEquilibriumMetricConfig
+from .welded_equilibrium import WeldedEquilibriumMetric, WeldedEquilibriumMetricConfig
 
 from .registry import MetricRegistry, register_non_vlm_metric, register_vlm_metric
 
@@ -34,7 +37,13 @@ __all__ = [
     "OutOfBoundMetricConfig",
     "OpeningClearanceMetric",
     "OpeningClearanceMetricConfig",
-    
+    "DrakeCollisionMetric",
+    "DrakeCollisionMetricConfig",
+    "StaticEquilibriumMetric",
+    "StaticEquilibriumMetricConfig",
+    "WeldedEquilibriumMetric",
+    "WeldedEquilibriumMetricConfig",
+
     # Registry components
     "MetricRegistry",
     "register_non_vlm_metric",

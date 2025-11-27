@@ -127,3 +127,26 @@ metrics: # Use metric class names as keys (i.e., CamelCase)
     window_check: True
     window_room_side_only: True
     window_front_extrude_distance: 0.5
+
+  DrakeCollisionMetric:
+    penetration_threshold: 0.001
+    coacd_threshold: 0.05
+
+  StaticEquilibriumMetric:
+    simulation_time: 5.0
+    time_step: 1.0e-3
+    use_trimesh_inertia: false
+    density: 1000.0
+    coacd_threshold: 0.05
+    displacement_threshold: 0.01
+    rotation_threshold: 0.1
+
+  WeldedEquilibriumMetric:
+    simulation_time: 5.0
+    time_step: 1.0e-3
+    use_trimesh_inertia: false
+    density: 1000.0
+    coacd_threshold: 0.05
+    displacement_threshold: 0.01
+    rotation_threshold: 0.1
+    penetration_threshold: 0.001

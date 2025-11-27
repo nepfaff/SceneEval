@@ -60,7 +60,7 @@ For VLM-dependent metrics (*Object Count*, *Object Attribute*, *Object-Object Re
 OPENAI_API_KEY=<your_key>
 ```
 
-Metrics that do NOT require a VLM: *Collision*, *Navigability*, *Out of Bounds*, *Opening Clearance*
+Metrics that do NOT require a VLM: *Collision*, *Navigability*, *Out of Bounds*, *Opening Clearance*, *Drake Collision*, *Static Equilibrium*, *Welded Equilibrium*
 
 ---
 
@@ -219,6 +219,53 @@ The conversion script:
 4. Creates a SceneEval scene state JSON with proper architecture (floor, walls)
 
 This approach matches SceneWeaver's own object counting methodology (`Nobj_unique` in `metric_*.json`), ensuring fair evaluation.
+
+
+## Drake Physics Metrics
+
+SceneEval includes physics-based metrics using [Drake](https://drake.mit.edu/) for more accurate collision detection and stability analysis.
+
+### Available Metrics
+
+| Metric | Description |
+|--------|-------------|
+| **DrakeCollisionMetric** | Detects collisions using [CoACD](https://github.com/SarahWeiii/CoACD) convex decomposition for physics-accurate collision geometry. More accurate than trimesh-based collision for physics simulation. |
+| **StaticEquilibriumMetric** | Runs physics simulation and measures object displacement. Lower displacement = better stability. |
+| **WeldedEquilibriumMetric** | Detects penetrating objects, welds them to the world, then simulates. Isolates stability issues from penetration-induced movement. |
+
+### Why Drake-based Collision Detection?
+
+The original `CollisionMetric` uses trimesh intersection which checks exact mesh geometry. However, physics simulators like Drake use **convex collision geometry** (via CoACD decomposition), which can slightly inflate meshes. `DrakeCollisionMetric` detects collisions that would actually occur in physics simulation.
+
+### Output Statistics
+
+`DrakeCollisionMetric` reports:
+- `max_penetration_depth` - Maximum penetration depth across all collision pairs
+- `min_penetration_depth` - Minimum penetration depth
+- `mean_penetration_depth` - Average penetration depth
+- `median_penetration_depth` - Median penetration depth
+- `num_collision_pairs` - Number of unique colliding object pairs
+- `num_obj_in_collision` - Number of objects involved in collisions
+
+`StaticEquilibriumMetric` and `WeldedEquilibriumMetric` report:
+- `scene_stable` - Whether all objects are stable (displacement < threshold)
+- `mean_displacement` - Average object displacement after simulation
+- `max_displacement` - Maximum object displacement
+- `per_object_results` - Displacement and rotation per object
+
+### Usage
+
+```bash
+# Run Drake collision metric
+python main.py \
+    'evaluation_plan.input_cfg.scene_methods=[LayoutVLM]' \
+    'evaluation_plan.evaluation_cfg.metrics=[DrakeCollisionMetric]'
+
+# Run all Drake physics metrics
+python main.py \
+    'evaluation_plan.input_cfg.scene_methods=[LayoutVLM]' \
+    'evaluation_plan.evaluation_cfg.metrics=[DrakeCollisionMetric,StaticEquilibriumMetric,WeldedEquilibriumMetric]'
+```
 
 
 ## Acknowledgements

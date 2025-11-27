@@ -39,6 +39,10 @@ dependencies = [
     "manifold3d",
     "embreex",
 
+    # Drake physics simulation
+    "drake",
+    "coacd",
+
     # Blender
     "bpy==4.2.13",
     "mathutils",

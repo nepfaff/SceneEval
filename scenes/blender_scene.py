@@ -401,31 +401,78 @@ class BlenderScene:
         """
 
         self.update()
-        
+
         # Get the bounding box of all objects
         objs_bbox_min, objs_bbox_max = self.bounding_corners()
         length_x = objs_bbox_max[0] - objs_bbox_min[0]
         length_y = objs_bbox_max[1] - objs_bbox_min[1]
-        
+
         # Get the floor height
         floor_height = objs_bbox_min[2]
-        
-        # Prepare materials 
+
+        # Check for converted SceneWeaver architecture GLBs if enabled
+        # These have baked textures from the original scene
+        converted_floor_loaded = False
+        converted_walls_loaded = False
+
+        if self.scene_cfg.use_converted_architecture and self.scene_state and self.scene_state.objs:
+            # Check if this is a SceneWeaver scene by looking at object model IDs
+            first_obj_model_id = self.scene_state.objs[0].model_id if self.scene_state.objs else None
+            if first_obj_model_id and first_obj_model_id.startswith("sceneweaver."):
+                # Extract scene ID and find assets directory
+                # Format: sceneweaver.scene_0__obj_name
+                try:
+                    asset_info = self.retriever.get_asset_info(first_obj_model_id)
+                    # Asset path is like: .../scene_X/assets/obj_name.glb
+                    # Architecture GLBs are in the same directory
+                    assets_dir = asset_info.file_path.parent
+
+                    # Check for converted architecture GLBs
+                    floor_glb = assets_dir / "architecture_floor.glb"
+                    walls_glb = assets_dir / "architecture_walls.glb"
+
+                    if floor_glb.exists():
+                        bpy.ops.import_scene.gltf(filepath=str(floor_glb))
+                        # Register imported objects as architecture
+                        for obj in bpy.context.selected_objects:
+                            obj.name = f"floor_{obj.name}"
+                            self.b_architecture[obj.name] = obj
+                            # Position at correct floor height
+                            obj.location.z = floor_height
+                        converted_floor_loaded = True
+
+                    if walls_glb.exists():
+                        bpy.ops.import_scene.gltf(filepath=str(walls_glb))
+                        # Register imported objects as architecture
+                        for obj in bpy.context.selected_objects:
+                            obj.name = f"wall_{obj.name}"
+                            self.b_architecture[obj.name] = obj
+                        converted_walls_loaded = True
+
+                except Exception as e:
+                    # Fall back to procedural architecture on any error
+                    pass
+
+        # Prepare materials (needed for non-converted walls or as fallback)
         wall_material = bpy.data.materials.new(name="wall_material")
         # wall_material.use_backface_culling = True
-        
+
         door_material = bpy.data.materials.new(name="door_material")
         door_material.use_nodes = True
         diffuse_node = door_material.node_tree.nodes.new("ShaderNodeBsdfDiffuse")
         diffuse_node.inputs["Color"].default_value = (0.31, 0.76, 0.40, 1)
         door_material.node_tree.links.new(door_material.node_tree.nodes["Material Output"].inputs["Surface"], diffuse_node.outputs["BSDF"])
-        
+
         window_material = bpy.data.materials.new(name="window_material")
         window_material.use_nodes = True
         diffuse_node = window_material.node_tree.nodes.new("ShaderNodeBsdfDiffuse")
         diffuse_node.inputs["Color"].default_value = (0.37, 0.76, 0.90, 1)
         window_material.node_tree.links.new(window_material.node_tree.nodes["Material Output"].inputs["Surface"], diffuse_node.outputs["BSDF"])
-        
+
+        # Skip floor/wall generation if converted architecture was loaded
+        if converted_floor_loaded and converted_walls_loaded:
+            return
+
         # Build the architecture
         if use_simple or architecture is None:
             # Use a simple architecture - a rectangular floor

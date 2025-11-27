@@ -11,6 +11,7 @@ seed: 42
 scene:
   skip_missing_obj: False
   simple_arch_wall_height: 3
+  use_converted_architecture: False  # Set True to load converted architecture GLBs (e.g., SceneWeaver)
   # Note: whether to use simple architecture is set in evaluation plans
 
 blender:

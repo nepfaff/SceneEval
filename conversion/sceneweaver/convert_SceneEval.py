@@ -511,16 +511,32 @@ def _rewire_node_tree(node_tree, processed_groups=None) -> int:
             if vector_input:
                 if not vector_input.is_linked:
                     # Unlinked = using Generated, connect UV
-                    links.new(tex_coord.outputs['UV'], vector_input)
-                    rewired_count += 1
+                    try:
+                        links.new(tex_coord.outputs['UV'], vector_input)
+                        rewired_count += 1
+                    except Exception:
+                        pass  # Link may already exist or node tree is modified
                 elif vector_input.is_linked:
-                    for link in list(links):
-                        if link.to_socket == vector_input:
-                            if link.from_node.type == 'TEX_COORD':
-                                if link.from_socket.name in ['Object', 'Generated']:
-                                    links.remove(link)
-                                    links.new(tex_coord.outputs['UV'], vector_input)
-                                    rewired_count += 1
+                    # Get the actual connected link safely
+                    connected_link = None
+                    for link in links:
+                        try:
+                            if link.to_socket == vector_input:
+                                connected_link = link
+                                break
+                        except ReferenceError:
+                            continue  # Link was removed
+
+                    if connected_link:
+                        try:
+                            from_node_type = connected_link.from_node.type
+                            from_socket_name = connected_link.from_socket.name
+                            if from_node_type == 'TEX_COORD' and from_socket_name in ['Object', 'Generated']:
+                                links.remove(connected_link)
+                                links.new(tex_coord.outputs['UV'], vector_input)
+                                rewired_count += 1
+                        except (ReferenceError, RuntimeError):
+                            pass  # Link was already modified
 
     return rewired_count
 
@@ -738,9 +754,11 @@ def bake_procedural_materials(obj: bpy.types.Object, output_dir: Path, resolutio
             # For procedural textures that use 3D coordinates, we need to temporarily
             # connect the color output to an emission shader
 
-            # Find what's connected to Principled Base Color
+            # Find what's connected to Principled Base Color or GROUP Surface output
             base_color_source = None
             base_color_default = None
+            group_surface_source = None
+
             if principled:
                 base_color_input = principled.inputs.get('Base Color')
                 if base_color_input:
@@ -752,11 +770,20 @@ def bake_procedural_materials(obj: bpy.types.Object, output_dir: Path, resolutio
                     else:
                         # Use default value (solid color)
                         base_color_default = base_color_input.default_value[:]
+            else:
+                # For GROUP-based materials, find what's connected to Material Output Surface
+                # We'll use the GROUP's BSDF output for emission baking
+                if material_output:
+                    surface_input = material_output.inputs.get('Surface')
+                    if surface_input and surface_input.is_linked:
+                        for link in links:
+                            if link.to_socket == surface_input:
+                                group_surface_source = link.from_socket
+                                break
 
-            # Create temporary emission shader for baking
-            emission_node = None
-            original_surface_link = None
+            # Bake the material using the appropriate method
             if base_color_source or base_color_default:
+                # Principled BSDF with known Base Color - use emission baking
                 emission_node = nodes.new('ShaderNodeEmission')
                 emission_node.location = (principled.location.x + 200, principled.location.y - 200) if principled else (200, -200)
 
@@ -764,10 +791,10 @@ def bake_procedural_materials(obj: bpy.types.Object, output_dir: Path, resolutio
                 if base_color_source:
                     links.new(base_color_source, emission_node.inputs['Color'])
                 else:
-                    # Use solid default color
                     emission_node.inputs['Color'].default_value = base_color_default
 
                 # Save and replace material output connection
+                original_surface_link = None
                 if material_output:
                     surface_input = material_output.inputs.get('Surface')
                     if surface_input and surface_input.is_linked:
@@ -783,7 +810,6 @@ def bake_procedural_materials(obj: bpy.types.Object, output_dir: Path, resolutio
 
                 # Restore original connection
                 if original_surface_link and material_output:
-                    # Remove emission link
                     for link in list(links):
                         if link.to_socket == material_output.inputs.get('Surface'):
                             links.remove(link)
@@ -792,6 +818,81 @@ def bake_procedural_materials(obj: bpy.types.Object, output_dir: Path, resolutio
 
                 # Remove emission node
                 nodes.remove(emission_node)
+
+            elif group_surface_source:
+                # GROUP-based material - extract Base Color from Principled BSDF inside GROUP
+                # Then use emission baking
+                group_node = group_surface_source.node
+
+                # Find Principled BSDF inside the GROUP and get its Base Color source
+                inner_base_color_source = None
+                inner_principled = None
+                if group_node.type == 'GROUP' and group_node.node_tree:
+                    inner_nodes = group_node.node_tree.nodes
+                    inner_links = group_node.node_tree.links
+                    for inner_node in inner_nodes:
+                        if inner_node.type == 'BSDF_PRINCIPLED':
+                            inner_principled = inner_node
+                            bc_input = inner_node.inputs.get('Base Color')
+                            if bc_input and bc_input.is_linked:
+                                for ilink in inner_links:
+                                    if ilink.to_socket == bc_input:
+                                        inner_base_color_source = ilink.from_socket
+                                        break
+                            break
+
+                if inner_base_color_source and inner_principled:
+                    # Create emission node INSIDE the GROUP
+                    inner_emission = inner_nodes.new('ShaderNodeEmission')
+                    inner_emission.location = (inner_principled.location.x + 200, inner_principled.location.y - 200)
+
+                    # Connect the Base Color source to emission
+                    inner_links.new(inner_base_color_source, inner_emission.inputs['Color'])
+
+                    # Find GROUP OUTPUT node and temporarily replace the BSDF output
+                    group_output = None
+                    original_bsdf_link = None
+                    for inner_node in inner_nodes:
+                        if inner_node.type == 'GROUP_OUTPUT':
+                            group_output = inner_node
+                            break
+
+                    if group_output:
+                        # Find the BSDF input on group output
+                        bsdf_input = None
+                        for inp in group_output.inputs:
+                            if inp.name == 'BSDF' or 'bsdf' in inp.name.lower() or inp.type == 'SHADER':
+                                bsdf_input = inp
+                                break
+
+                        if bsdf_input and bsdf_input.is_linked:
+                            for ilink in list(inner_links):
+                                if ilink.to_socket == bsdf_input:
+                                    original_bsdf_link = ilink.from_socket
+                                    inner_links.remove(ilink)
+                                    break
+                            inner_links.new(inner_emission.outputs['Emission'], bsdf_input)
+
+                    # Bake EMIT
+                    bpy.ops.object.bake(type='EMIT')
+
+                    # Restore original GROUP connection
+                    if group_output and bsdf_input and original_bsdf_link:
+                        for ilink in list(inner_links):
+                            if ilink.to_socket == bsdf_input:
+                                inner_links.remove(ilink)
+                                break
+                        inner_links.new(original_bsdf_link, bsdf_input)
+
+                    # Remove temporary emission node
+                    inner_nodes.remove(inner_emission)
+                else:
+                    # Fallback: Use DIFFUSE bake with color pass only (no direct/indirect lighting)
+                    bpy.context.scene.render.bake.use_pass_direct = False
+                    bpy.context.scene.render.bake.use_pass_indirect = False
+                    bpy.context.scene.render.bake.use_pass_color = True
+                    bpy.ops.object.bake(type='DIFFUSE')
+
             else:
                 # Fall back to COMBINED bake
                 bpy.context.scene.render.bake.use_pass_direct = True
