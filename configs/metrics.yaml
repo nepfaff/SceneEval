@@ -146,6 +146,7 @@ metrics: # Use metric class names as keys (i.e., CamelCase)
     coacd_threshold: 0.05
     displacement_threshold: 0.01
     rotation_threshold: 0.1
+    hydroelastic_modulus: null  # point contact (hydroelastic causes runtime errors with convex meshes)
 
   # Static equilibrium metrics (VHACD variant)
   StaticEquilibriumMetricVHACD:
@@ -155,6 +156,7 @@ metrics: # Use metric class names as keys (i.e., CamelCase)
     density: 1000.0
     displacement_threshold: 0.01
     rotation_threshold: 0.1
+    hydroelastic_modulus: null  # point contact (hydroelastic causes runtime errors with convex meshes)
 
   # Welded equilibrium metrics (CoACD variant)
   WeldedEquilibriumMetricCoACD:
@@ -166,6 +168,7 @@ metrics: # Use metric class names as keys (i.e., CamelCase)
     displacement_threshold: 0.01
     rotation_threshold: 0.1
     penetration_threshold: 0.001
+    hydroelastic_modulus: null  # point contact (hydroelastic causes runtime errors with convex meshes)
 
   # Welded equilibrium metrics (VHACD variant)
   WeldedEquilibriumMetricVHACD:
@@ -176,3 +179,4 @@ metrics: # Use metric class names as keys (i.e., CamelCase)
     displacement_threshold: 0.01
     rotation_threshold: 0.1
     penetration_threshold: 0.001
+    hydroelastic_modulus: null  # point contact (hydroelastic causes runtime errors with convex meshes)

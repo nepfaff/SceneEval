@@ -102,7 +102,7 @@ class TrimeshScene:
         # Apply extra rotation transform from the asset itself to normalize the mesh
         if extra_rotation_transform is not None:
             mesh.apply_transform(extra_rotation_transform)
-        
+
         # Apply the object's transform from the scene state (how the object is placed in the scene)
         scene_transform = np.asarray(obj.transform.data).reshape(4, 4).T
         mesh.apply_transform(scene_transform)

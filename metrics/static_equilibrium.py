@@ -38,6 +38,8 @@ class StaticEquilibriumMetricConfigCoACD:
         weld_wall_ceiling_objects: If True, weld wall and ceiling mounted objects
             to world before simulation (requires obj_support_type_result.json).
         save_simulation_html: If True, save meshcat visualization to HTML file.
+        hydroelastic_modulus: If set, adds compliant hydroelastic properties
+            with this modulus (Pa). If None, no hydroelastic properties are added.
     """
 
     simulation_time: float = 2.0
@@ -48,7 +50,8 @@ class StaticEquilibriumMetricConfigCoACD:
     displacement_threshold: float = 0.01
     rotation_threshold: float = 0.1
     weld_wall_ceiling_objects: bool = True
-    save_simulation_html: bool = False
+    save_simulation_html: bool = True
+    hydroelastic_modulus: float | None = None
 
 
 @dataclass
@@ -66,6 +69,8 @@ class StaticEquilibriumMetricConfigVHACD:
         weld_wall_ceiling_objects: If True, weld wall and ceiling mounted objects
             to world before simulation (requires obj_support_type_result.json).
         save_simulation_html: If True, save meshcat visualization to HTML file.
+        hydroelastic_modulus: If set, adds compliant hydroelastic properties
+            with this modulus (Pa). If None, no hydroelastic properties are added.
     """
 
     simulation_time: float = 2.0
@@ -75,7 +80,8 @@ class StaticEquilibriumMetricConfigVHACD:
     displacement_threshold: float = 0.01
     rotation_threshold: float = 0.1
     weld_wall_ceiling_objects: bool = True
-    save_simulation_html: bool = False
+    save_simulation_html: bool = True
+    hydroelastic_modulus: float | None = None
 
 
 class StaticEquilibriumMetricBase(BaseMetric):
@@ -148,31 +154,60 @@ class StaticEquilibriumMetricBase(BaseMetric):
         # Get coacd_threshold if applicable.
         coacd_threshold = getattr(self.cfg, "coacd_threshold", 0.05)
 
+        # Get hydroelastic_modulus if applicable.
+        hydroelastic_modulus = getattr(self.cfg, "hydroelastic_modulus", None)
+
         # Create Drake plant with dynamics (time_step > 0).
-        builder, plant, scene_graph, obj_id_to_model_name = create_drake_plant_from_scene(
-            scene=self.scene,
-            time_step=self.cfg.time_step,
-            temp_dir=drake_scene_dir / "simulation",
-            weld_to_world=objects_to_weld,
-            use_trimesh_inertia=self.cfg.use_trimesh_inertia,
-            density=self.cfg.density,
-            coacd_threshold=coacd_threshold,
-            decomposition_method=self.decomposition_method,
-        )
+        # Try with hydroelastic first, fall back to point contact if it fails.
+        def create_and_run_simulation(use_hydroelastic_modulus, time_step):
+            """Create plant and run simulation with given hydroelastic setting."""
+            builder, plant, scene_graph, obj_id_to_model_name = create_drake_plant_from_scene(
+                scene=self.scene,
+                time_step=time_step,
+                temp_dir=drake_scene_dir / "simulation",
+                weld_to_world=objects_to_weld,
+                use_trimesh_inertia=self.cfg.use_trimesh_inertia,
+                density=self.cfg.density,
+                coacd_threshold=coacd_threshold,
+                decomposition_method=self.decomposition_method,
+                hydroelastic_modulus=use_hydroelastic_modulus,
+            )
 
-        # Determine HTML output path if visualization is enabled.
-        html_path = None
-        if getattr(self.cfg, "save_simulation_html", False):
-            html_path = drake_scene_dir / "simulation" / "simulation.html"
+            # Determine HTML output path if visualization is enabled.
+            html_path = None
+            if getattr(self.cfg, "save_simulation_html", False):
+                html_path = drake_scene_dir / "simulation" / "simulation.html"
 
-        # Run simulation.
-        diagram, initial_context, final_context = run_simulation(
-            builder=builder,
-            plant=plant,
-            simulation_time=self.cfg.simulation_time,
-            scene_graph=scene_graph,
-            output_html_path=html_path,
-        )
+            # Run simulation.
+            diagram, initial_context, final_context = run_simulation(
+                builder=builder,
+                plant=plant,
+                simulation_time=self.cfg.simulation_time,
+                scene_graph=scene_graph,
+                output_html_path=html_path,
+            )
+
+            return diagram, plant, initial_context, final_context, obj_id_to_model_name
+
+        # Try with hydroelastic first.
+        try:
+            diagram, plant, initial_context, final_context, obj_id_to_model_name = (
+                create_and_run_simulation(hydroelastic_modulus, self.cfg.time_step)
+            )
+        except RuntimeError as e:
+            if "Cannot instantiate plane from normal" in str(e) and hydroelastic_modulus is not None:
+                # Hydroelastic failed due to degenerate mesh geometry.
+                # Fall back to point contact (no hydroelastic) with smaller timestep.
+                point_contact_timestep = 1e-3
+                print(
+                    f"WARNING: Hydroelastic contact failed with degenerate mesh. "
+                    f"Falling back to point contact with timestep={point_contact_timestep}."
+                )
+                diagram, plant, initial_context, final_context, obj_id_to_model_name = (
+                    create_and_run_simulation(None, point_contact_timestep)
+                )
+            else:
+                raise
 
         # Get plant contexts.
         initial_plant_context = plant.GetMyContextFromRoot(initial_context)

@@ -18,13 +18,20 @@ import coacd
 import numpy as np
 import trimesh
 
+# Register Drake namespace for SDF files.
+ET.register_namespace("drake", "drake.mit.edu")
+
 from pydrake.all import (
     AddMultibodyPlantSceneGraph,
     DiagramBuilder,
+    DiscreteContactApproximation,
     LoadModelDirectives,
     MeshcatVisualizer,
+    MeshcatVisualizerParams,
     MultibodyPlant,
     ProcessModelDirectives,
+    Rgba,
+    Role,
     SceneGraph,
     Simulator,
     StartMeshcat,
@@ -133,6 +140,213 @@ def generate_collision_geometry_vhacd(
         return [mesh.copy()]
 
 
+def is_mesh_valid_for_hydroelastic(
+    mesh: trimesh.Trimesh,
+    min_volume: float = 1e-10,
+) -> bool:
+    """Check if a mesh is valid for hydroelastic contact (heuristic check).
+
+    Filters out obviously degenerate convex pieces by volume.
+    Same approach as mesh-to-sim-asset.
+
+    Args:
+        mesh: The mesh to validate.
+        min_volume: Minimum volume threshold. Pieces smaller than this
+            are considered degenerate and will be skipped.
+
+    Returns:
+        True if the mesh passes volume check.
+    """
+    if len(mesh.faces) == 0:
+        return False
+
+    # Filter by volume - same approach as mesh-to-sim-asset
+    if mesh.volume < min_volume:
+        return False
+
+    return True
+
+
+def test_object_hydroelastic_in_drake(
+    mesh_paths: list[Path],
+    hydroelastic_modulus: float = 1e6,
+) -> bool:
+    """Test if an object (all its convex pieces) works with hydroelastic in Drake.
+
+    Actually loads all mesh pieces into Drake with hydroelastic properties and
+    tests if a simple simulation step succeeds. This catches degenerate
+    tetrahedra that heuristic checks miss, including piece-to-piece interactions.
+
+    Args:
+        mesh_paths: List of paths to all OBJ mesh files for this object.
+        hydroelastic_modulus: Hydroelastic modulus to use for testing.
+
+    Returns:
+        True if the object works with hydroelastic in Drake.
+    """
+    import shutil
+
+    # Build collision elements for all pieces.
+    collision_elements = []
+    for i, mesh_path in enumerate(mesh_paths):
+        collision_elements.append(f"""
+      <collision name="collision_{i}">
+        <geometry>
+          <mesh>
+            <uri>{mesh_path.name}</uri>
+            <drake:declare_convex/>
+          </mesh>
+        </geometry>
+        <drake:proximity_properties>
+          <drake:compliant_hydroelastic/>
+          <drake:hydroelastic_modulus>{hydroelastic_modulus:.3e}</drake:hydroelastic_modulus>
+        </drake:proximity_properties>
+      </collision>""")
+
+    # Create a minimal SDF with all pieces.
+    sdf_content = f"""<?xml version="1.0"?>
+<sdf xmlns:drake="drake.mit.edu" version="1.7">
+  <model name="test_model">
+    <link name="test_link">
+      <inertial>
+        <mass>1.0</mass>
+        <inertia>
+          <ixx>0.1</ixx><iyy>0.1</iyy><izz>0.1</izz>
+          <ixy>0</ixy><ixz>0</ixz><iyz>0</iyz>
+        </inertia>
+      </inertial>
+{"".join(collision_elements)}
+    </link>
+  </model>
+</sdf>
+"""
+    # Also need a ground plane with rigid hydroelastic for contact.
+    ground_sdf = """<?xml version="1.0"?>
+<sdf xmlns:drake="drake.mit.edu" version="1.7">
+  <model name="ground">
+    <link name="ground_link">
+      <collision name="collision">
+        <geometry>
+          <box><size>10 10 0.1</size></box>
+        </geometry>
+        <pose>0 0 -0.05 0 0 0</pose>
+        <drake:proximity_properties>
+          <drake:rigid_hydroelastic/>
+        </drake:proximity_properties>
+      </collision>
+    </link>
+  </model>
+</sdf>
+"""
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp_path = Path(tmp_dir)
+
+        # Write the test SDF.
+        test_sdf_path = tmp_path / "test_model.sdf"
+        test_sdf_path.write_text(sdf_content)
+
+        # Write the ground SDF.
+        ground_sdf_path = tmp_path / "ground.sdf"
+        ground_sdf_path.write_text(ground_sdf)
+
+        # Copy all mesh files to the temp directory.
+        for mesh_path in mesh_paths:
+            shutil.copy(mesh_path, tmp_path / mesh_path.name)
+
+        # Create Drake directives.
+        directives_content = f"""
+directives:
+  - add_model:
+      name: ground
+      file: file://{ground_sdf_path}
+  - add_weld:
+      parent: world
+      child: ground::ground_link
+  - add_model:
+      name: test_model
+      file: file://{test_sdf_path}
+  - add_frame:
+      name: test_frame
+      X_PF:
+        base_frame: world
+        translation: [0, 0, 0.5]
+  - add_weld:
+      parent: test_frame
+      child: test_model::test_link
+"""
+        directives_path = tmp_path / "directives.yaml"
+        directives_path.write_text(directives_content)
+
+        try:
+            # Build Drake plant.
+            builder = DiagramBuilder()
+            plant, scene_graph = AddMultibodyPlantSceneGraph(builder, time_step=1e-2)
+            plant.set_discrete_contact_approximation(DiscreteContactApproximation.kLagged)
+
+            directives = LoadModelDirectives(str(directives_path))
+            ProcessModelDirectives(directives, plant, parser=None)
+            plant.Finalize()
+
+            diagram = builder.Build()
+            simulator = Simulator(diagram)
+            context = simulator.get_mutable_context()
+
+            # Try a tiny simulation step - this triggers contact computation.
+            simulator.AdvanceTo(0.01)
+            return True
+
+        except RuntimeError as e:
+            if "Cannot instantiate plane from normal" in str(e):
+                return False
+            # Re-raise other errors
+            raise
+        except Exception:
+            # Any other error means the object doesn't work
+            return False
+
+
+def add_compliant_proximity_properties_element(
+    collision_item: ET.Element,
+    hydroelastic_modulus: float,
+    hunt_crossley_dissipation: float | None = None,
+    mu_dynamic: float | None = None,
+    mu_static: float | None = None,
+) -> ET.Element:
+    """Add compliant hydroelastic proximity properties to a collision element.
+
+    Args:
+        collision_item: The collision XML element to add properties to.
+        hydroelastic_modulus: The hydroelastic modulus (Pa). Higher values = stiffer.
+        hunt_crossley_dissipation: Optional Hunt-Crossley dissipation (s/m).
+        mu_dynamic: Optional dynamic friction coefficient.
+        mu_static: Optional static friction coefficient.
+
+    Returns:
+        The proximity properties XML element.
+    """
+    proximity_item = ET.SubElement(
+        collision_item, "{drake.mit.edu}proximity_properties"
+    )
+    ET.SubElement(proximity_item, "{drake.mit.edu}compliant_hydroelastic")
+    modulus_item = ET.SubElement(
+        proximity_item, "{drake.mit.edu}hydroelastic_modulus"
+    )
+    modulus_item.text = f"{hydroelastic_modulus:.3e}"
+    if hunt_crossley_dissipation is not None:
+        dissipation_item = ET.SubElement(
+            proximity_item, "{drake.mit.edu}hunt_crossley_dissipation"
+        )
+        dissipation_item.text = f"{hunt_crossley_dissipation:.3f}"
+    if mu_dynamic is not None:
+        mu_dyn_item = ET.SubElement(proximity_item, "{drake.mit.edu}mu_dynamic")
+        mu_dyn_item.text = f"{mu_dynamic:.3f}"
+    if mu_static is not None:
+        mu_stat_item = ET.SubElement(proximity_item, "{drake.mit.edu}mu_static")
+        mu_stat_item.text = f"{mu_static:.3f}"
+    return proximity_item
+
+
 def generate_sdf_from_trimesh(
     mesh: trimesh.Trimesh,
     output_dir: Path,
@@ -141,6 +355,10 @@ def generate_sdf_from_trimesh(
     density: float = 1000.0,
     coacd_threshold: float = 0.05,
     decomposition_method: Literal["coacd", "vhacd"] = "coacd",
+    hydroelastic_modulus: float | None = None,
+    hunt_crossley_dissipation: float | None = None,
+    mu_dynamic: float | None = None,
+    mu_static: float | None = None,
 ) -> Path:
     """Generate Drake SDF file from trimesh mesh.
 
@@ -158,6 +376,11 @@ def generate_sdf_from_trimesh(
         density: Density in kg/m³ (only used if use_trimesh_inertia=True).
         coacd_threshold: CoACD approximation threshold (only used for coacd).
         decomposition_method: Convex decomposition method ("coacd" or "vhacd").
+        hydroelastic_modulus: If set, adds compliant hydroelastic properties
+            with this modulus (Pa). If None, no hydroelastic properties are added.
+        hunt_crossley_dissipation: Optional Hunt-Crossley dissipation (s/m).
+        mu_dynamic: Optional dynamic friction coefficient.
+        mu_static: Optional static friction coefficient.
 
     Returns:
         Path to the generated SDF file.
@@ -232,26 +455,82 @@ def generate_sdf_from_trimesh(
         ET.SubElement(inertia, "ixz").text = f"{inertia_tensor[0, 2]:.6f}"
         ET.SubElement(inertia, "iyz").text = f"{inertia_tensor[1, 2]:.6f}"
 
-    # Visual and collision geometry (using CoACD pieces for both).
+    # Visual and collision geometry (using convex decomposition pieces).
+    # First save all pieces, then test the whole object in Drake if hydroelastic is requested.
+    # If the object fails the test, fall back to point contact for all pieces.
+    valid_pieces: list[tuple[int, trimesh.Trimesh]] = []
+    skipped_piece_count = 0
+
     for i, piece in enumerate(collision_pieces):
-        # Save piece as OBJ file.
-        piece_filename = f"{name}_piece_{i}.obj"
+        # Only filter pieces when hydroelastic is enabled - small/thin pieces can
+        # cause degenerate tetrahedra in Drake's hydroelastic pressure field.
+        # For point contact, all pieces are valid.
+        if hydroelastic_modulus is not None and not is_mesh_valid_for_hydroelastic(piece):
+            console_logger.warning(
+                f"Skipping piece {i} of '{name}' entirely "
+                f"(failed heuristic check: too small or too thin)"
+            )
+            skipped_piece_count += 1
+            continue
+        valid_pieces.append((i, piece))
+
+    # Save all valid pieces as OBJ files.
+    piece_paths: list[Path] = []
+    for piece_idx, (orig_idx, piece) in enumerate(valid_pieces):
+        piece_filename = f"{name}_piece_{piece_idx}.obj"
         piece_path = output_dir / piece_filename
         piece.export(piece_path)
+        piece_paths.append(piece_path)
+
+    # Determine if the whole object can use hydroelastic by testing in Drake.
+    use_hydroelastic_for_object = False
+    if hydroelastic_modulus is not None and len(piece_paths) > 0:
+        if test_object_hydroelastic_in_drake(piece_paths, hydroelastic_modulus):
+            use_hydroelastic_for_object = True
+            console_logger.info(
+                f"'{name}': {len(piece_paths)} pieces with hydroelastic "
+                f"({skipped_piece_count} skipped)"
+            )
+        else:
+            console_logger.warning(
+                f"'{name}' failed Drake hydroelastic test, "
+                f"using point contact for all {len(piece_paths)} pieces"
+            )
+    elif hydroelastic_modulus is None and len(piece_paths) > 0:
+        console_logger.info(
+            f"'{name}': {len(piece_paths)} pieces with point contact "
+            f"({skipped_piece_count} skipped)"
+        )
+
+    # Add visual and collision elements for each piece.
+    for piece_idx, piece_path in enumerate(piece_paths):
+        piece_filename = piece_path.name
 
         # Visual geometry.
-        visual = ET.SubElement(link, "visual", name=f"visual_{i}")
+        visual = ET.SubElement(link, "visual", name=f"visual_{piece_idx}")
         visual_geom = ET.SubElement(visual, "geometry")
         visual_mesh_elem = ET.SubElement(visual_geom, "mesh")
         visual_uri = ET.SubElement(visual_mesh_elem, "uri")
         visual_uri.text = piece_filename
 
         # Collision geometry.
-        collision = ET.SubElement(link, "collision", name=f"collision_{i}")
+        collision = ET.SubElement(link, "collision", name=f"collision_{piece_idx}")
         collision_geom = ET.SubElement(collision, "geometry")
         collision_mesh_elem = ET.SubElement(collision_geom, "mesh")
         collision_uri = ET.SubElement(collision_mesh_elem, "uri")
         collision_uri.text = piece_filename
+        # Declare mesh as convex for collision detection.
+        ET.SubElement(collision_mesh_elem, "{drake.mit.edu}declare_convex")
+
+        # Add compliant hydroelastic proximity properties only if object passed test.
+        if use_hydroelastic_for_object:
+            add_compliant_proximity_properties_element(
+                collision_item=collision,
+                hydroelastic_modulus=hydroelastic_modulus,
+                hunt_crossley_dissipation=hunt_crossley_dissipation,
+                mu_dynamic=mu_dynamic,
+                mu_static=mu_static,
+            )
 
     # Format XML with indentation.
     ET.indent(sdf, space="  ", level=0)
@@ -269,12 +548,22 @@ def generate_sdf_from_trimesh(
 def generate_floor_sdf(
     t_architecture: dict[str, trimesh.Trimesh],
     output_dir: Path,
+    use_rigid_hydroelastic: bool = False,
+    wall_expansion: float = 0.5,
+    floor_expansion: float = 0.5,
 ) -> Path:
-    """Generate SDF file for floor/architecture (welded to world).
+    """Generate SDF file for floor/architecture using box primitives.
+
+    Uses Drake box primitives for collision geometry instead of mesh geometry.
+    This is more robust for hydroelastic contact and avoids degenerate mesh issues.
+    Boxes are expanded outward from the room to avoid reducing usable space.
 
     Args:
         t_architecture: Dictionary of architecture trimesh objects.
         output_dir: Directory to write SDF and OBJ files.
+        use_rigid_hydroelastic: If True, adds rigid hydroelastic properties.
+        wall_expansion: Amount to expand walls outward from room (meters).
+        floor_expansion: Amount to expand floor downward (meters).
 
     Returns:
         Path to the generated SDF file.
@@ -291,25 +580,76 @@ def generate_floor_sdf(
 
     # Process each architecture element.
     for arch_id, t_arch in t_architecture.items():
-        # Save architecture mesh as OBJ.
         safe_name = arch_id.replace(" ", "_").lower()
+
+        # Save architecture mesh as OBJ for visual geometry.
         arch_filename = f"floor_{safe_name}.obj"
         arch_path = output_dir / arch_filename
         t_arch.export(arch_path)
 
-        # Visual geometry.
+        # Visual geometry uses the mesh.
         visual = ET.SubElement(link, "visual", name=f"visual_{safe_name}")
         visual_geom = ET.SubElement(visual, "geometry")
         visual_mesh_elem = ET.SubElement(visual_geom, "mesh")
         visual_uri = ET.SubElement(visual_mesh_elem, "uri")
         visual_uri.text = arch_filename
 
-        # Collision geometry.
+        # Collision geometry uses box primitive derived from bounding box.
+        # This is more robust for Drake than mesh geometry.
+        bounds = t_arch.bounds  # [[min_x, min_y, min_z], [max_x, max_y, max_z]]
+        bbox_min = bounds[0].copy()  # Copy to avoid mutating original
+        bbox_max = bounds[1].copy()
+        extents = bbox_max - bbox_min
+
+        # Determine expansion direction based on architecture type.
+        # Walls expand outward from room, floor expands downward.
+        if arch_id.startswith("wall"):
+            # Determine which axis is the "thin" wall direction.
+            # The thin axis should expand outward (away from room center).
+            # Walls typically have one dimension much smaller than the others.
+            thin_axis = np.argmin(extents[:2])  # Only consider x, y for thin axis
+
+            # Expand the thin axis outward from room.
+            # We need to know which side of the room this wall is on.
+            # For simplicity, expand in the direction away from origin (room center).
+            wall_center = (bbox_min + bbox_max) / 2
+            if thin_axis == 0:  # Thin in x, expand x
+                if wall_center[0] > 0:
+                    bbox_max[0] += wall_expansion
+                else:
+                    bbox_min[0] -= wall_expansion
+            else:  # Thin in y, expand y
+                if wall_center[1] > 0:
+                    bbox_max[1] += wall_expansion
+                else:
+                    bbox_min[1] -= wall_expansion
+
+        elif arch_id.startswith("floor"):
+            # Floor expands downward (negative z).
+            bbox_min[2] -= floor_expansion
+
+        # Calculate final extents and center after expansion.
+        extents = bbox_max - bbox_min
+        center = (bbox_min + bbox_max) / 2
+
+        # Collision geometry using box primitive.
         collision = ET.SubElement(link, "collision", name=f"collision_{safe_name}")
         collision_geom = ET.SubElement(collision, "geometry")
-        collision_mesh_elem = ET.SubElement(collision_geom, "mesh")
-        collision_uri = ET.SubElement(collision_mesh_elem, "uri")
-        collision_uri.text = arch_filename
+        box_elem = ET.SubElement(collision_geom, "box")
+        size_elem = ET.SubElement(box_elem, "size")
+        size_elem.text = f"{extents[0]:.6f} {extents[1]:.6f} {extents[2]:.6f}"
+
+        # Add pose for the collision box.
+        pose_elem = ET.SubElement(collision, "pose")
+        pose_elem.text = f"{center[0]:.6f} {center[1]:.6f} {center[2]:.6f} 0 0 0"
+
+        # Add rigid hydroelastic properties for box collision.
+        # Boxes always work with hydroelastic (no degenerate face issues).
+        if use_rigid_hydroelastic:
+            proximity_item = ET.SubElement(
+                collision, "{drake.mit.edu}proximity_properties"
+            )
+            ET.SubElement(proximity_item, "{drake.mit.edu}rigid_hydroelastic")
 
     # Format XML with indentation.
     ET.indent(sdf, space="  ", level=0)
@@ -333,6 +673,10 @@ def create_drake_plant_from_scene(
     density: float = 1000.0,
     coacd_threshold: float = 0.05,
     decomposition_method: Literal["coacd", "vhacd"] = "coacd",
+    hydroelastic_modulus: float | None = None,
+    hunt_crossley_dissipation: float | None = None,
+    mu_dynamic: float | None = None,
+    mu_static: float | None = None,
 ) -> tuple[DiagramBuilder, MultibodyPlant, SceneGraph, dict[str, str]]:
     """Create Drake plant from SceneEval scene.
 
@@ -349,6 +693,11 @@ def create_drake_plant_from_scene(
         density: Density in kg/m³ (only used if use_trimesh_inertia=True).
         coacd_threshold: CoACD approximation threshold (only used for coacd).
         decomposition_method: Convex decomposition method ("coacd" or "vhacd").
+        hydroelastic_modulus: If set, adds compliant hydroelastic properties
+            with this modulus (Pa). If None, no hydroelastic properties are added.
+        hunt_crossley_dissipation: Optional Hunt-Crossley dissipation (s/m).
+        mu_dynamic: Optional dynamic friction coefficient.
+        mu_static: Optional static friction coefficient.
 
     Returns:
         Tuple of (builder, plant, scene_graph, obj_id_to_model_name).
@@ -397,10 +746,19 @@ def create_drake_plant_from_scene(
                 density=density,
                 coacd_threshold=coacd_threshold,
                 decomposition_method=decomposition_method,
+                hydroelastic_modulus=hydroelastic_modulus,
+                hunt_crossley_dissipation=hunt_crossley_dissipation,
+                mu_dynamic=mu_dynamic,
+                mu_static=mu_static,
             )
 
         # Generate floor plan SDF (architecture is also already in world coords).
-        generate_floor_sdf(scene.t_architecture, temp_dir)
+        # Use rigid hydroelastic for floor if objects use hydroelastic.
+        generate_floor_sdf(
+            scene.t_architecture,
+            temp_dir,
+            use_rigid_hydroelastic=(hydroelastic_modulus is not None),
+        )
 
         # Build Drake directives YAML.
         # Objects are at world position in their mesh, so use identity transform.
@@ -415,9 +773,28 @@ def create_drake_plant_from_scene(
         with open(directives_path, "w") as f:
             f.write(directives_yaml)
 
+        # Also write visualization-only directives (no welds except floor).
+        # This can be used with Drake's model_visualizer to show inertia ellipsoids:
+        #   python -m pydrake.visualization.model_visualizer scene_viz.dmd.yaml
+        viz_directives_yaml = _build_drake_directives_world_coords(
+            temp_dir=temp_dir,
+            obj_id_to_model_name=obj_id_to_model_name,
+            weld_to_world=[],  # No object welds
+            include_welds=False,
+        )
+        viz_directives_path = temp_dir / "scene_viz.dmd.yaml"
+        with open(viz_directives_path, "w") as f:
+            f.write(viz_directives_yaml)
+
         # Create Drake plant.
         builder = DiagramBuilder()
         plant, scene_graph = AddMultibodyPlantSceneGraph(builder, time_step=time_step)
+
+        # Add kLagged contact approximation for stability.
+        if time_step > 0.0:
+            plant.set_discrete_contact_approximation(
+                DiscreteContactApproximation.kLagged
+            )
 
         # Load directives.
         directives = LoadModelDirectives(str(directives_path))
@@ -444,6 +821,7 @@ def _build_drake_directives_world_coords(
     temp_dir: Path,
     obj_id_to_model_name: dict[str, str],
     weld_to_world: list[str],
+    include_welds: bool = True,
 ) -> str:
     """Build Drake model directives YAML for world-coord meshes.
 
@@ -454,6 +832,9 @@ def _build_drake_directives_world_coords(
         temp_dir: Directory containing SDF files.
         obj_id_to_model_name: Mapping from object ID to model name.
         weld_to_world: List of object IDs to weld to world.
+        include_welds: If True, add weld directives for objects in weld_to_world.
+            If False, skip all welds except floor (for visualization-only files
+            that can be used with Drake's model_visualizer to show inertia).
 
     Returns:
         YAML string for Drake directives.
@@ -463,7 +844,7 @@ def _build_drake_directives_world_coords(
 
     lines = ["directives:"]
 
-    # Add floor plan (welded to world).
+    # Add floor plan (always welded to world - it's static architecture).
     lines.extend([
         "- add_model:",
         f'    name: "floor_plan"',
@@ -485,8 +866,8 @@ def _build_drake_directives_world_coords(
             f"        rotation: !Rpy {{ deg: [0.0, 0.0, 0.0] }}",
         ])
 
-        # Weld if requested.
-        if obj_id in weld_to_world:
+        # Weld if requested and welds are enabled.
+        if include_welds and obj_id in weld_to_world:
             lines.extend([
                 "- add_weld:",
                 '    parent: "world"',
@@ -660,6 +1041,7 @@ def run_simulation(
     simulation_time: float = 2.0,
     scene_graph: SceneGraph | None = None,
     output_html_path: Path | None = None,
+    show_collision_geometry: bool = True,
 ) -> tuple:
     """Run Drake simulation and return initial and final contexts.
 
@@ -669,6 +1051,8 @@ def run_simulation(
         simulation_time: Time to simulate in seconds.
         scene_graph: Drake SceneGraph (required if output_html_path is set).
         output_html_path: If provided, save meshcat visualization to this HTML file.
+        show_collision_geometry: If True and output_html_path is set, also show
+            collision geometry in semi-transparent red for debugging.
 
     Returns:
         Tuple of (diagram, initial_context, final_context).
@@ -684,7 +1068,19 @@ def run_simulation(
         meshcat.SetProperty("/Background", "top_color", [1.0, 1.0, 1.0])
         meshcat.SetProperty("/Background", "bottom_color", [1.0, 1.0, 1.0])
         meshcat.SetProperty("/Grid", "visible", False)
+
+        # Add visual geometry visualizer (default).
         visualizer = MeshcatVisualizer.AddToBuilder(builder, scene_graph, meshcat)
+
+        # Add collision geometry visualizer (semi-transparent red).
+        if show_collision_geometry:
+            collision_params = MeshcatVisualizerParams()
+            collision_params.role = Role.kProximity
+            collision_params.prefix = "collision"
+            collision_params.default_color = Rgba(1.0, 0.0, 0.0, 0.3)
+            MeshcatVisualizer.AddToBuilder(
+                builder, scene_graph, meshcat, collision_params
+            )
 
     # Build diagram.
     diagram = builder.Build()
