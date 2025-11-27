@@ -76,10 +76,10 @@ class SceneState:
         else:
             self.architecture = Architecture(arch_spec)
         
-        # Load the objects
+        # Load the objects (filter out architecture objects marked with isArchitecture: True)
         object_specs: dict = scene_spec.get("object", None)
         if object_specs is None:
             warnings.warn("Not loading any objects. Missing an 'object' key.")
         else:
-            self.objs = [ Obj(obj_dict) for obj_dict in object_specs ]
+            self.objs = [ Obj(obj_dict) for obj_dict in object_specs if not obj_dict.get("isArchitecture", False) ]
         

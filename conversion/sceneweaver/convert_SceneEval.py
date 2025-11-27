@@ -1153,8 +1153,9 @@ def convert_sceneweaver_scene(
     scene_state["scene"]["arch"]["id"] = scene_uuid
     scene_state["scene"]["arch"]["elements"] = arch_data["elements"]
     scene_state["scene"]["arch"]["regions"] = arch_data["regions"]
-    # Include both regular objects and architecture objects (if exported)
-    scene_state["scene"]["object"] = objects_data + architecture_objects
+    # Only include regular objects (architecture GLBs are exported for visual rendering but not
+    # included as objects - they would be empty meshes that cause evaluation issues)
+    scene_state["scene"]["object"] = objects_data
 
     # Save scene state (directly in output_dir, not in subdirectory)
     output_json = output_dir / f"scene_{scene_id}.json"
