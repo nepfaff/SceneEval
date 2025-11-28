@@ -180,3 +180,22 @@ metrics: # Use metric class names as keys (i.e., CamelCase)
     rotation_threshold: 0.1
     penetration_threshold: 0.001
     hydroelastic_modulus: null  # point contact (hydroelastic causes runtime errors with convex meshes)
+
+  # Architectural welded equilibrium metrics (CoACD variant)
+  # Welds floor, wall, ceiling objects - only "object" type objects move freely
+  ArchitecturalWeldedEquilibriumMetricCoACD:
+    simulation_time: 5.0
+    time_step: 1.0e-3
+    coacd_threshold: 0.05
+    displacement_threshold: 0.01
+    rotation_threshold: 0.1
+    hydroelastic_modulus: null  # point contact (hydroelastic causes runtime errors with convex meshes)
+
+  # Architectural welded equilibrium metrics (VHACD variant)
+  # Welds floor, wall, ceiling objects - only "object" type objects move freely
+  ArchitecturalWeldedEquilibriumMetricVHACD:
+    simulation_time: 5.0
+    time_step: 1.0e-3
+    displacement_threshold: 0.01
+    rotation_threshold: 0.1
+    hydroelastic_modulus: null  # point contact (hydroelastic causes runtime errors with convex meshes)

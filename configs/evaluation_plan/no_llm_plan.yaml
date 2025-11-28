@@ -20,6 +20,9 @@ evaluation_cfg:
     - DrakeCollisionMetricVHACD
     - StaticEquilibriumMetricVHACD
     - WeldedEquilibriumMetricVHACD
+    # Architectural welded equilibrium (welds floor/wall/ceiling, objects move freely):
+    - ArchitecturalWeldedEquilibriumMetricCoACD
+    - ArchitecturalWeldedEquilibriumMetricVHACD
   output_dir: ./output_eval
   save_blend_file: True
   vlm: GPT

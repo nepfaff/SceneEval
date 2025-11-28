@@ -28,6 +28,12 @@ from .welded_equilibrium import (
     WeldedEquilibriumMetricVHACD,
     WeldedEquilibriumMetricConfigVHACD,
 )
+from .architectural_welded_equilibrium import (
+    ArchitecturalWeldedEquilibriumMetricCoACD,
+    ArchitecturalWeldedEquilibriumMetricConfigCoACD,
+    ArchitecturalWeldedEquilibriumMetricVHACD,
+    ArchitecturalWeldedEquilibriumMetricConfigVHACD,
+)
 
 from .registry import MetricRegistry, register_non_vlm_metric, register_vlm_metric
 
@@ -67,6 +73,11 @@ __all__ = [
     "WeldedEquilibriumMetricConfigCoACD",
     "WeldedEquilibriumMetricVHACD",
     "WeldedEquilibriumMetricConfigVHACD",
+    # Architectural welded equilibrium metrics (CoACD and VHACD variants)
+    "ArchitecturalWeldedEquilibriumMetricCoACD",
+    "ArchitecturalWeldedEquilibriumMetricConfigCoACD",
+    "ArchitecturalWeldedEquilibriumMetricVHACD",
+    "ArchitecturalWeldedEquilibriumMetricConfigVHACD",
 
     # Registry components
     "MetricRegistry",
