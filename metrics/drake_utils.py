@@ -351,8 +351,7 @@ def generate_sdf_from_trimesh(
     mesh: trimesh.Trimesh,
     output_dir: Path,
     name: str,
-    use_trimesh_inertia: bool = False,
-    density: float = 1000.0,
+    mass: float = 1.0,
     coacd_threshold: float = 0.05,
     decomposition_method: Literal["coacd", "vhacd"] = "coacd",
     hydroelastic_modulus: float | None = None,
@@ -366,14 +365,14 @@ def generate_sdf_from_trimesh(
     used for both visual and collision geometry. This simplifies the pipeline
     since visual fidelity doesn't matter for physics simulation.
 
+    Inertial properties (pose, inertia tensor) are NOT specified - Drake will
+    compute default inertia from the collision geometry automatically.
+
     Args:
         mesh: Input trimesh mesh in local coordinates.
         output_dir: Directory to write SDF and OBJ files.
         name: Name for the asset (used in filenames and model name).
-        use_trimesh_inertia: If True, compute mass from volume*density and
-            inertia from mesh geometry. If False, use mass=1kg and omit
-            inertia (Drake uses defaults).
-        density: Density in kg/m³ (only used if use_trimesh_inertia=True).
+        mass: Mass in kg (default 1.0).
         coacd_threshold: CoACD approximation threshold (only used for coacd).
         decomposition_method: Convex decomposition method ("coacd" or "vhacd").
         hydroelastic_modulus: If set, adds compliant hydroelastic properties
@@ -401,60 +400,7 @@ def generate_sdf_from_trimesh(
     # Add single link (simple rigid body).
     link = ET.SubElement(model, "link", name="base_link")
 
-    # Inertial properties.
-    inertial = ET.SubElement(link, "inertial")
-
-    if use_trimesh_inertia:
-        # Compute mass from volume and density.
-        volume = mesh.volume
-        if volume <= 0:
-            console_logger.warning(
-                f"Mesh '{name}' has invalid volume ({volume}). Using default mass=1kg."
-            )
-            mass = 1.0
-            inertia_tensor = None
-        else:
-            mass = volume * density
-
-            # Get inertia tensor from trimesh (assumes uniform density).
-            # trimesh.moment_inertia returns moment of inertia; scale by density.
-            inertia_tensor = mesh.moment_inertia * density
-
-            # Validate inertia tensor has positive eigenvalues.
-            eigenvalues = np.linalg.eigvals(inertia_tensor)
-            if np.any(eigenvalues <= 0):
-                console_logger.warning(
-                    f"Computed inertia tensor for '{name}' has non-positive eigenvalues "
-                    f"[{eigenvalues[0]:.3f}, {eigenvalues[1]:.3f}, {eigenvalues[2]:.3f}]. "
-                    f"Using mass={mass:.3f}kg but omitting inertia tensor."
-                )
-                inertia_tensor = None
-    else:
-        # Use default mass of 1kg.
-        mass = 1.0
-        inertia_tensor = None
-
-    mass_elem = ET.SubElement(inertial, "mass")
-    mass_elem.text = f"{mass:.6f}"
-
-    # Center of mass pose.
-    center_of_mass = mesh.center_mass
-    com_pose = ET.SubElement(inertial, "pose")
-    com_pose.text = (
-        f"{center_of_mass[0]:.6f} {center_of_mass[1]:.6f} "
-        f"{center_of_mass[2]:.6f} 0 0 0"
-    )
-
-    # Inertia tensor (only include if valid).
-    if inertia_tensor is not None:
-        inertia = ET.SubElement(inertial, "inertia")
-        ET.SubElement(inertia, "ixx").text = f"{inertia_tensor[0, 0]:.6f}"
-        ET.SubElement(inertia, "iyy").text = f"{inertia_tensor[1, 1]:.6f}"
-        ET.SubElement(inertia, "izz").text = f"{inertia_tensor[2, 2]:.6f}"
-        ET.SubElement(inertia, "ixy").text = f"{inertia_tensor[0, 1]:.6f}"
-        ET.SubElement(inertia, "ixz").text = f"{inertia_tensor[0, 2]:.6f}"
-        ET.SubElement(inertia, "iyz").text = f"{inertia_tensor[1, 2]:.6f}"
-
+    # Generate collision pieces first so we can compute COM from them.
     # Visual and collision geometry (using convex decomposition pieces).
     # First save all pieces, then test the whole object in Drake if hydroelastic is requested.
     # If the object fails the test, fall back to point contact for all pieces.
@@ -481,6 +427,21 @@ def generate_sdf_from_trimesh(
         piece_path = output_dir / piece_filename
         piece.export(piece_path)
         piece_paths.append(piece_path)
+
+    # Compute center of mass from collision pieces (bounding box center).
+    # This is robust to mesh outliers unlike vertices mean.
+    if valid_pieces:
+        all_vertices = np.vstack([piece.vertices for _, piece in valid_pieces])
+        com = (all_vertices.min(axis=0) + all_vertices.max(axis=0)) / 2
+    else:
+        com = np.zeros(3)
+
+    # Add inertial properties with computed COM.
+    inertial = ET.SubElement(link, "inertial")
+    mass_elem = ET.SubElement(inertial, "mass")
+    mass_elem.text = f"{mass:.6f}"
+    com_pose = ET.SubElement(inertial, "pose")
+    com_pose.text = f"{com[0]:.6f} {com[1]:.6f} {com[2]:.6f} 0 0 0"
 
     # Determine if the whole object can use hydroelastic by testing in Drake.
     use_hydroelastic_for_object = False
@@ -669,8 +630,7 @@ def create_drake_plant_from_scene(
     time_step: float = 0.01,
     temp_dir: Path | None = None,
     weld_to_world: list[str] | None = None,
-    use_trimesh_inertia: bool = False,
-    density: float = 1000.0,
+    mass: float = 1.0,
     coacd_threshold: float = 0.05,
     decomposition_method: Literal["coacd", "vhacd"] = "coacd",
     hydroelastic_modulus: float | None = None,
@@ -689,8 +649,7 @@ def create_drake_plant_from_scene(
         time_step: Drake simulation time step (use >0 for dynamics, 0 for static).
         temp_dir: Directory for temporary SDF files. If None, uses tempfile.
         weld_to_world: List of object IDs to weld to world (make static).
-        use_trimesh_inertia: If True, compute mass/inertia from mesh.
-        density: Density in kg/m³ (only used if use_trimesh_inertia=True).
+        mass: Mass in kg for all objects (default 1.0).
         coacd_threshold: CoACD approximation threshold (only used for coacd).
         decomposition_method: Convex decomposition method ("coacd" or "vhacd").
         hydroelastic_modulus: If set, adds compliant hydroelastic properties
@@ -742,8 +701,7 @@ def create_drake_plant_from_scene(
                 mesh=t_obj_world,
                 output_dir=temp_dir,
                 name=model_name,
-                use_trimesh_inertia=use_trimesh_inertia,
-                density=density,
+                mass=mass,
                 coacd_threshold=coacd_threshold,
                 decomposition_method=decomposition_method,
                 hydroelastic_modulus=hydroelastic_modulus,

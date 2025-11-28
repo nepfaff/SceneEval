@@ -166,8 +166,6 @@ class StaticEquilibriumMetricBase(BaseMetric):
                 time_step=time_step,
                 temp_dir=drake_scene_dir / "simulation",
                 weld_to_world=objects_to_weld,
-                use_trimesh_inertia=self.cfg.use_trimesh_inertia,
-                density=self.cfg.density,
                 coacd_threshold=coacd_threshold,
                 decomposition_method=self.decomposition_method,
                 hydroelastic_modulus=use_hydroelastic_modulus,
