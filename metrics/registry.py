@@ -155,8 +155,41 @@ class MetricRegistry:
         Returns:
             True if the metric requires a VLM, False otherwise.
         """
-        
+
         return name in cls._vlm_required
+
+    @classmethod
+    def get_optimized_execution_order(cls, metric_names: list[str]) -> list[str]:
+        """
+        Order metrics optimally: fast CPU -> VLM -> physics (Drake).
+
+        This ordering helps with:
+        - Fast metrics complete quickly, giving early feedback
+        - VLM metrics can be I/O-bound (API calls)
+        - Physics metrics (Drake) are CPU-intensive and run last
+
+        Args:
+            metric_names: List of metric names to order
+
+        Returns:
+            List of metric names in optimized execution order
+        """
+        # Physics/simulation metrics that should run last (CPU-intensive)
+        physics_prefixes = ('Drake', 'Static', 'Welded', 'Architectural')
+
+        fast_cpu = []
+        vlm_metrics = []
+        physics = []
+
+        for name in metric_names:
+            if any(name.startswith(p) for p in physics_prefixes):
+                physics.append(name)
+            elif cls.requires_vlm(name):
+                vlm_metrics.append(name)
+            else:
+                fast_cpu.append(name)
+
+        return fast_cpu + vlm_metrics + physics
     
 # Decorators
 def register_non_vlm_metric(config_class: type | None = None):

@@ -10,11 +10,14 @@ from dataclasses import dataclass
 from dotenv import load_dotenv
 from omegaconf import DictConfig, open_dict
 
+from omegaconf import OmegaConf
+
 from scenes import *
 from metrics import MetricRegistry, ObjMatching, ObjMatchingResults
 from assets import Retriever
 from semantic_colors import apply_semantic_colors
 from vlm import VLMRegistry, BaseVLM
+from parallel import ParallelSceneEvaluator
 
 load_dotenv()
 
@@ -346,7 +349,73 @@ def main(cfg: DictConfig) -> None:
     scene_cfg = SceneConfig(**cfg.scene)
     blender_cfg = BlenderConfig(**cfg.blender)
     trimesh_cfg = TrimeshConfig(**cfg.trimesh)
-    
+
+    # ----------------------------------------------------------------------------------------
+    # PARALLEL EXECUTION (if num_workers > 1)
+    # ----------------------------------------------------------------------------------------
+
+    num_workers = cfg.get('parallel', {}).get('num_workers', 1)
+    total_scene_count = sum(len(files) for files in scenes_per_method.values())
+    num_workers = min(num_workers, total_scene_count)  # Cap to scene count
+
+    if num_workers > 1:
+        print(f"\n*** PARALLEL MODE: {num_workers} workers ***\n")
+
+        evaluator = ParallelSceneEvaluator(num_workers=num_workers)
+
+        # Convert OmegaConf objects to plain dicts for pickling
+        scene_cfg_dict = {
+            "skip_missing_obj": scene_cfg.skip_missing_obj,
+            "simple_arch_wall_height": scene_cfg.simple_arch_wall_height,
+            "use_simple_architecture": scene_cfg.use_simple_architecture,
+            "use_converted_architecture": scene_cfg.use_converted_architecture,
+        }
+        blender_cfg_dict = OmegaConf.to_container(cfg.blender, resolve=True)
+        trimesh_cfg_dict = OmegaConf.to_container(cfg.trimesh, resolve=True)
+        vlm_config_dict = OmegaConf.to_container(vlm_config, resolve=True)
+        dataset_cfgs_dict = {asset: OmegaConf.to_container(cfg.assets[asset], resolve=True) for asset in all_asset_datasets}
+
+        # Convert metric configs to dicts
+        metric_configs_dict = {}
+        for metric_name in metrics_to_run:
+            if hasattr(cfg.metrics, metric_name):
+                metric_configs_dict[metric_name] = OmegaConf.to_container(getattr(cfg.metrics, metric_name), resolve=True)
+
+        # Get model output directory names
+        model_output_dir_names = {
+            method: cfg.models[method].output_dir_name
+            for method in evaluation_plan.input_cfg.scene_methods
+        }
+
+        successes, failures = evaluator.evaluate_scenes(
+            scenes_per_method=scenes_per_method,
+            output_base_dir=pathlib.Path(evaluation_plan.evaluation_cfg.output_dir),
+            model_output_dir_names=model_output_dir_names,
+            metrics_to_run=metrics_to_run,
+            metric_configs_dict=metric_configs_dict,
+            scene_cfg_dict=scene_cfg_dict,
+            blender_cfg_dict=blender_cfg_dict,
+            trimesh_cfg_dict=trimesh_cfg_dict,
+            vlm_name=evaluation_plan.evaluation_cfg.vlm,
+            vlm_config_dict=vlm_config_dict,
+            dataset_cfgs_dict=dataset_cfgs_dict,
+            annotation_file=evaluation_plan.input_cfg.annotation_file,
+            use_existing_matching=evaluation_plan.evaluation_cfg.use_existing_matching,
+            use_empty_matching_result=evaluation_plan.evaluation_cfg.use_empty_matching_result,
+            save_blend_file=evaluation_plan.evaluation_cfg.save_blend_file,
+            normal_render_tasks=evaluation_plan.render_cfg.normal_render_tasks,
+            verbose=evaluation_plan.evaluation_cfg.verbose,
+            method_use_simple_architecture=evaluation_plan.input_cfg.method_use_simple_architecture,
+        )
+
+        # Print summary and exit
+        ParallelSceneEvaluator.print_summary(successes, failures)
+        return
+
+    # ----------------------------------------------------------------------------------------
+    # SEQUENTIAL EXECUTION (num_workers == 1)
+    # ----------------------------------------------------------------------------------------
+
     # Load scene states and do the evaluations
     for method in scenes_per_method.keys():
         

@@ -8,6 +8,10 @@ defaults:
 
 seed: 42
 
+# Parallel execution configuration
+parallel:
+  num_workers: 20  # Number of parallel workers; 1 = sequential for debugging
+
 scene:
   skip_missing_obj: False
   simple_arch_wall_height: 3
