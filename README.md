@@ -388,6 +388,35 @@ python main.py \
 ```
 
 
+## Parallel Evaluation
+
+For large-scale evaluation, use the bash script to run multiple independent processes:
+
+```bash
+# Evaluate 100 scenes with 4 parallel workers
+./scripts/run_parallel.sh 100 4 \
+    'evaluation_plan.input_cfg.scene_methods=[SceneWeaver]' \
+    'evaluation_plan.evaluation_cfg.metrics=[CollisionMetric,StaticEquilibriumMetricCoACD]' \
+    'evaluation_plan.evaluation_cfg.use_empty_matching_result=True'
+```
+
+```bash
+# Evaluate 100 scenes with 4 parallel workers
+./scripts/run_parallel.sh 100 4 evaluation_plan=eval_plan
+```
+
+**Arguments:**
+- First argument: Total number of scenes
+- Second argument: Number of parallel workers
+- Remaining arguments: Passed to `main.py`
+
+**Output:**
+- Each scene creates `eval_result.json` and `eval.log` in its output directory
+- Worker logs are saved to `logs/worker_*.log`
+
+This approach runs completely independent Python processes, avoiding any issues with Blender's `bpy` module or Drake's Meshcat in multi-threaded environments.
+
+
 ## Acknowledgements
 This work was funded in part by the Sony Research Award Program, a CIFAR AI Chair, a Canada Research Chair, NSERC Discovery Grants, and enabled by support from the [Digital Research Alliance of Canada](https://alliancecan.ca/).
 We thank Nao Yamato, Yotaro Shimose, and other members on the Sony team for their feedback.

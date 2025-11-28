@@ -1,10 +1,10 @@
 """
-Parallel evaluation module for SceneEval.
+Parallel evaluation utilities for SceneEval.
 
-Provides ProcessPoolExecutor-based parallel scene evaluation.
+For parallel execution, use scripts/run_parallel.sh which runs multiple
+independent Python processes (avoiding bpy/Drake multiprocessing issues).
 """
 
-from .executor import ParallelSceneEvaluator
-from .worker import evaluate_scene_worker
+from .worker import FileLoggingContext
 
-__all__ = ["ParallelSceneEvaluator", "evaluate_scene_worker"]
+__all__ = ["FileLoggingContext"]

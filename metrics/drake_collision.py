@@ -89,7 +89,6 @@ class DrakeCollisionMetricBase(BaseMetric):
             time_step=0.0,  # Static query, no simulation.
             temp_dir=drake_scene_dir,
             weld_to_world=[],
-            use_trimesh_inertia=False,
             coacd_threshold=coacd_threshold,
             decomposition_method=self.decomposition_method,
         )

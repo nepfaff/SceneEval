@@ -219,28 +219,35 @@ def generate_collision_geometry_vhacd(
         return [mesh.copy()]
 
 
-def is_mesh_valid_for_hydroelastic(
+def is_convex_piece_valid(
     mesh: trimesh.Trimesh,
     min_volume: float = 1e-10,
+    min_extent: float = 1e-6,
 ) -> bool:
-    """Check if a mesh is valid for hydroelastic contact (heuristic check).
+    """Check if a convex piece is valid for Drake collision geometry.
 
-    Filters out obviously degenerate convex pieces by volume.
-    Same approach as mesh-to-sim-asset.
+    Filters out degenerate convex pieces that would cause Qhull errors.
+    Checks both volume and bounding box extents to catch flat meshes.
 
     Args:
         mesh: The mesh to validate.
-        min_volume: Minimum volume threshold. Pieces smaller than this
-            are considered degenerate and will be skipped.
+        min_volume: Minimum volume threshold.
+        min_extent: Minimum extent in any dimension. Meshes with any
+            bounding box dimension smaller than this are considered flat.
 
     Returns:
-        True if the mesh passes volume check.
+        True if the mesh passes all validity checks.
     """
     if len(mesh.faces) == 0:
         return False
 
     # Filter by volume - same approach as mesh-to-sim-asset
     if mesh.volume < min_volume:
+        return False
+
+    # Filter by bounding box extents - catch flat meshes that cause Qhull errors
+    extents = mesh.bounding_box.extents
+    if min(extents) < min_extent:
         return False
 
     return True
@@ -487,13 +494,12 @@ def generate_sdf_from_trimesh(
     skipped_piece_count = 0
 
     for i, piece in enumerate(collision_pieces):
-        # Only filter pieces when hydroelastic is enabled - small/thin pieces can
-        # cause degenerate tetrahedra in Drake's hydroelastic pressure field.
-        # For point contact, all pieces are valid.
-        if hydroelastic_modulus is not None and not is_mesh_valid_for_hydroelastic(piece):
+        # Filter degenerate pieces (too small or flat) that would cause Qhull errors.
+        # This applies to all pieces, not just hydroelastic mode.
+        if not is_convex_piece_valid(piece):
             console_logger.warning(
                 f"Skipping piece {i} of '{name}' entirely "
-                f"(failed heuristic check: too small or too thin)"
+                f"(failed validity check: too small or too flat)"
             )
             skipped_piece_count += 1
             continue

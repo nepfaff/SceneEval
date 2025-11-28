@@ -17,7 +17,7 @@ from metrics import MetricRegistry, ObjMatching, ObjMatchingResults
 from assets import Retriever
 from semantic_colors import apply_semantic_colors
 from vlm import VLMRegistry, BaseVLM
-from parallel import ParallelSceneEvaluator
+from parallel.worker import FileLoggingContext
 
 load_dotenv()
 
@@ -351,69 +351,7 @@ def main(cfg: DictConfig) -> None:
     trimesh_cfg = TrimeshConfig(**cfg.trimesh)
 
     # ----------------------------------------------------------------------------------------
-    # PARALLEL EXECUTION (if num_workers > 1)
-    # ----------------------------------------------------------------------------------------
-
-    num_workers = cfg.get('parallel', {}).get('num_workers', 1)
-    total_scene_count = sum(len(files) for files in scenes_per_method.values())
-    num_workers = min(num_workers, total_scene_count)  # Cap to scene count
-
-    if num_workers > 1:
-        print(f"\n*** PARALLEL MODE: {num_workers} workers ***\n")
-
-        evaluator = ParallelSceneEvaluator(num_workers=num_workers)
-
-        # Convert OmegaConf objects to plain dicts for pickling
-        scene_cfg_dict = {
-            "skip_missing_obj": scene_cfg.skip_missing_obj,
-            "simple_arch_wall_height": scene_cfg.simple_arch_wall_height,
-            "use_simple_architecture": scene_cfg.use_simple_architecture,
-            "use_converted_architecture": scene_cfg.use_converted_architecture,
-        }
-        blender_cfg_dict = OmegaConf.to_container(cfg.blender, resolve=True)
-        trimesh_cfg_dict = OmegaConf.to_container(cfg.trimesh, resolve=True)
-        vlm_config_dict = OmegaConf.to_container(vlm_config, resolve=True)
-        dataset_cfgs_dict = {asset: OmegaConf.to_container(cfg.assets[asset], resolve=True) for asset in all_asset_datasets}
-
-        # Convert metric configs to dicts
-        metric_configs_dict = {}
-        for metric_name in metrics_to_run:
-            if hasattr(cfg.metrics, metric_name):
-                metric_configs_dict[metric_name] = OmegaConf.to_container(getattr(cfg.metrics, metric_name), resolve=True)
-
-        # Get model output directory names
-        model_output_dir_names = {
-            method: cfg.models[method].output_dir_name
-            for method in evaluation_plan.input_cfg.scene_methods
-        }
-
-        successes, failures = evaluator.evaluate_scenes(
-            scenes_per_method=scenes_per_method,
-            output_base_dir=pathlib.Path(evaluation_plan.evaluation_cfg.output_dir),
-            model_output_dir_names=model_output_dir_names,
-            metrics_to_run=metrics_to_run,
-            metric_configs_dict=metric_configs_dict,
-            scene_cfg_dict=scene_cfg_dict,
-            blender_cfg_dict=blender_cfg_dict,
-            trimesh_cfg_dict=trimesh_cfg_dict,
-            vlm_name=evaluation_plan.evaluation_cfg.vlm,
-            vlm_config_dict=vlm_config_dict,
-            dataset_cfgs_dict=dataset_cfgs_dict,
-            annotation_file=evaluation_plan.input_cfg.annotation_file,
-            use_existing_matching=evaluation_plan.evaluation_cfg.use_existing_matching,
-            use_empty_matching_result=evaluation_plan.evaluation_cfg.use_empty_matching_result,
-            save_blend_file=evaluation_plan.evaluation_cfg.save_blend_file,
-            normal_render_tasks=evaluation_plan.render_cfg.normal_render_tasks,
-            verbose=evaluation_plan.evaluation_cfg.verbose,
-            method_use_simple_architecture=evaluation_plan.input_cfg.method_use_simple_architecture,
-        )
-
-        # Print summary and exit
-        ParallelSceneEvaluator.print_summary(successes, failures)
-        return
-
-    # ----------------------------------------------------------------------------------------
-    # SEQUENTIAL EXECUTION (num_workers == 1)
+    # SCENE EVALUATION
     # ----------------------------------------------------------------------------------------
 
     # Load scene states and do the evaluations
@@ -445,110 +383,114 @@ def main(cfg: DictConfig) -> None:
             # Create the output directory
             output_dir: pathlib.Path = pathlib.Path(evaluation_plan.evaluation_cfg.output_dir) / cfg.models[method].output_dir_name / scene_state.name
             output_dir.mkdir(parents=True, exist_ok=True)
-                
-            # Create the scene with output directory
-            scene = Scene(mesh_retriever, scene_state, scene_cfg, blender_cfg, trimesh_cfg, output_dir)
-            
-            # ---------------------------------------------------
-            
-            # Save the Blender scene for reference if configured
-            if evaluation_plan.evaluation_cfg.save_blend_file:
-                scene.blender_scene.save_blend()
-            
-            # ---------------------------------------------------
-            
-            # Render as requested
-            if evaluation_plan.render_cfg.normal_render_tasks:
-                _render_scene(scene, evaluation_plan.render_cfg.normal_render_tasks)
 
-            # For SceneWeaver: Copy and render original blend file for comparison
-            # (GLB exports have texture baking issues, original blend has perfect materials)
-            if method == "SceneWeaver":
-                _copy_and_render_original_sceneweaver_blend(scene, method_scene_file, output_dir)
-                # Recreate scene after rendering original blend - the bpy.ops.wm.open_mainfile()
-                # call invalidates all Blender object references in the Scene object
+            # Set up per-scene logging (logs to both file and stdout)
+            log_path = output_dir / "eval.log"
+            with FileLoggingContext(log_file_path=log_path, suppress_stdout=False):
+
+                # Create the scene with output directory
                 scene = Scene(mesh_retriever, scene_state, scene_cfg, blender_cfg, trimesh_cfg, output_dir)
 
-            # If no_eval and not semantic_render, can skip the rest
-            if evaluation_plan.evaluation_cfg.no_eval and not evaluation_plan.render_cfg.semantic_render_tasks:
-                continue
-            
-            # ---------------------------------------------------
-            
-            # Get the corresponding annotation
-            scene_file_id = scene_state.name.split("_")[-1]
-            annotation = annotations[int(scene_file_id)]
-            
-            # ---------------------------------------------------
-            
-            # Use empty matching result if configured
-            # Useful if only running metrics that do not require object matching (e.g., collision)
-            if evaluation_plan.evaluation_cfg.use_empty_matching_result:
-                print("Using empty matching result as configured.")
-                matching_result = ObjMatchingResults(per_category={}, not_matched_objs=[], actual_categories={})
-            else:
-                matching_result = _get_obj_matching(scene, annotation, vlm, evaluation_plan.evaluation_cfg.use_existing_matching)
-            
-            print("Using object matching:")
-            for category, obj_ids in matching_result.per_category.items():
-                print(f" - {category}: {obj_ids}")
-            print()
-            
-            # ---------------------------------------------------
-            
-            # Apply semantic colors, render, and save the scene
-            if evaluation_plan.render_cfg.semantic_render_tasks:
-                color_reference_path = pathlib.Path(evaluation_plan.render_cfg.semantic_color_reference.replace("*", scene_file_id)) if evaluation_plan.render_cfg.semantic_color_reference else None
-                apply_semantic_colors(scene, matching_result, vlm, color_reference_path)
-                _render_scene(scene, evaluation_plan.render_cfg.semantic_render_tasks)
+                # ---------------------------------------------------
+
+                # Save the Blender scene for reference if configured
                 if evaluation_plan.evaluation_cfg.save_blend_file:
-                    scene.blender_scene.save_blend("scene_semantic_colors.blend")
-                
-            # ---------------------------------------------------
+                    scene.blender_scene.save_blend()
 
-            # Skip evaluation if no_eval is set
-            if evaluation_plan.evaluation_cfg.no_eval:
-                continue
-                
-            # Initialize output json
-            output_json = {
-                "method": method,
-                "scene_id": scene_file_id,
-                "description": annotation.description,
-                "obj_ids": scene.get_obj_ids(),
-                "object_descriptions": [scene.obj_descriptions[obj_id] for obj_id in scene.get_obj_ids()],
-                "object_matching_per_category": matching_result.per_category,
-                "not_matched_objects": matching_result.not_matched_objs,
-                "metrics": metrics_to_run,
-                "results": {}
-            }
+                # ---------------------------------------------------
 
-            # Run metrics
-            common_metric_params = {
-                "scene": scene,
-                "annotation": annotation,
-                "vlm": vlm,
-                "matching_result": matching_result,
-                "output_dir": output_dir
-            }
-            for metric_name in metrics_to_run:
-                print(f"----- Running metric: {metric_name}")
-                metric_instance = MetricRegistry.instantiate_metric(metric_name, metric_configs, **common_metric_params)
-                
-                result = metric_instance.run(evaluation_plan.evaluation_cfg.verbose)
-                output_json["results"][metric_name] = {
-                    "message": result.message,
-                    "data": result.data
-                }
-        
-                # Save results up to this point
-                output_file = output_dir / f"eval_result.json"
-                with open(output_file, "w") as f:
-                    json.dump(output_json, f, indent=4)
-                    
+                # Render as requested
+                if evaluation_plan.render_cfg.normal_render_tasks:
+                    _render_scene(scene, evaluation_plan.render_cfg.normal_render_tasks)
+
+                # For SceneWeaver: Copy and render original blend file for comparison
+                # (GLB exports have texture baking issues, original blend has perfect materials)
+                if method == "SceneWeaver":
+                    _copy_and_render_original_sceneweaver_blend(scene, method_scene_file, output_dir)
+                    # Recreate scene after rendering original blend - the bpy.ops.wm.open_mainfile()
+                    # call invalidates all Blender object references in the Scene object
+                    scene = Scene(mesh_retriever, scene_state, scene_cfg, blender_cfg, trimesh_cfg, output_dir)
+
+                # If no_eval and not semantic_render, can skip the rest
+                if evaluation_plan.evaluation_cfg.no_eval and not evaluation_plan.render_cfg.semantic_render_tasks:
+                    continue
+
+                # ---------------------------------------------------
+
+                # Get the corresponding annotation
+                scene_file_id = scene_state.name.split("_")[-1]
+                annotation = annotations[int(scene_file_id)]
+
+                # ---------------------------------------------------
+
+                # Use empty matching result if configured
+                # Useful if only running metrics that do not require object matching (e.g., collision)
+                if evaluation_plan.evaluation_cfg.use_empty_matching_result:
+                    print("Using empty matching result as configured.")
+                    matching_result = ObjMatchingResults(per_category={}, not_matched_objs=[], actual_categories={})
+                else:
+                    matching_result = _get_obj_matching(scene, annotation, vlm, evaluation_plan.evaluation_cfg.use_existing_matching)
+
+                print("Using object matching:")
+                for category, obj_ids in matching_result.per_category.items():
+                    print(f" - {category}: {obj_ids}")
                 print()
 
-            print(f"All done. Results saved to: {output_file}\n")
+                # ---------------------------------------------------
+
+                # Apply semantic colors, render, and save the scene
+                if evaluation_plan.render_cfg.semantic_render_tasks:
+                    color_reference_path = pathlib.Path(evaluation_plan.render_cfg.semantic_color_reference.replace("*", scene_file_id)) if evaluation_plan.render_cfg.semantic_color_reference else None
+                    apply_semantic_colors(scene, matching_result, vlm, color_reference_path)
+                    _render_scene(scene, evaluation_plan.render_cfg.semantic_render_tasks)
+                    if evaluation_plan.evaluation_cfg.save_blend_file:
+                        scene.blender_scene.save_blend("scene_semantic_colors.blend")
+
+                # ---------------------------------------------------
+
+                # Skip evaluation if no_eval is set
+                if evaluation_plan.evaluation_cfg.no_eval:
+                    continue
+
+                # Initialize output json
+                output_json = {
+                    "method": method,
+                    "scene_id": scene_file_id,
+                    "description": annotation.description,
+                    "obj_ids": scene.get_obj_ids(),
+                    "object_descriptions": [scene.obj_descriptions[obj_id] for obj_id in scene.get_obj_ids()],
+                    "object_matching_per_category": matching_result.per_category,
+                    "not_matched_objects": matching_result.not_matched_objs,
+                    "metrics": metrics_to_run,
+                    "results": {}
+                }
+
+                # Run metrics
+                common_metric_params = {
+                    "scene": scene,
+                    "annotation": annotation,
+                    "vlm": vlm,
+                    "matching_result": matching_result,
+                    "output_dir": output_dir
+                }
+                for metric_name in metrics_to_run:
+                    print(f"----- Running metric: {metric_name}")
+                    metric_instance = MetricRegistry.instantiate_metric(metric_name, metric_configs, **common_metric_params)
+
+                    result = metric_instance.run(evaluation_plan.evaluation_cfg.verbose)
+                    output_json["results"][metric_name] = {
+                        "message": result.message,
+                        "data": result.data
+                    }
+
+                    # Save results up to this point
+                    output_file = output_dir / f"eval_result.json"
+                    with open(output_file, "w") as f:
+                        json.dump(output_json, f, indent=4)
+
+                    print()
+
+                print(f"All done. Results saved to: {output_file}\n")
 
 if __name__ == "__main__":
     main()
