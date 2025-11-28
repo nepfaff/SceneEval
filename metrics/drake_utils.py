@@ -42,6 +42,85 @@ from scenes import Scene
 console_logger = logging.getLogger(__name__)
 
 
+def _strip_visual_elements_from_sdf(sdf_path: Path) -> None:
+    """Remove all <visual> elements from an SDF file.
+
+    This is useful when visual meshes (e.g., GLTF files) are not available but
+    we only need collision geometry for physics simulation. Drake will still
+    work correctly with collision geometry only.
+
+    Args:
+        sdf_path: Path to the SDF file to modify.
+    """
+    try:
+        tree = ET.parse(sdf_path)
+        root = tree.getroot()
+
+        modified = False
+        # Find all visual elements and remove them.
+        for link in root.iter("link"):
+            visuals_to_remove = list(link.findall("visual"))
+            for visual in visuals_to_remove:
+                link.remove(visual)
+                modified = True
+
+        if modified:
+            tree.write(sdf_path, xml_declaration=True, encoding="utf-8")
+            console_logger.debug(f"Stripped visual elements from {sdf_path.name}")
+
+    except ET.ParseError as e:
+        console_logger.warning(f"Failed to parse SDF {sdf_path}: {e}")
+
+
+def _fix_invalid_inertia_in_sdf(sdf_path: Path) -> None:
+    """Fix invalid inertia in SDF files by removing <inertia> element.
+
+    Scene-agent may generate SDFs with zero inertia components (e.g., ixx=0 for thin
+    objects like pens). This causes Drake's mass matrix to be singular. This function
+    removes the <inertia> element while keeping <mass> and <pose> (CoM), allowing Drake
+    to compute default inertia from the geometry.
+
+    Args:
+        sdf_path: Path to the SDF file to fix.
+    """
+    try:
+        tree = ET.parse(sdf_path)
+        root = tree.getroot()
+
+        modified = False
+        # Find all inertial elements.
+        for inertial in root.iter("inertial"):
+            inertia = inertial.find("inertia")
+            if inertia is not None:
+                # Check if any inertia component is zero or negative.
+                has_invalid = False
+                for component in ["ixx", "iyy", "izz"]:
+                    elem = inertia.find(component)
+                    if elem is not None:
+                        try:
+                            val = float(elem.text)
+                            if val <= 0:
+                                has_invalid = True
+                                break
+                        except (ValueError, TypeError):
+                            has_invalid = True
+                            break
+
+                if has_invalid:
+                    # Remove the inertia element, keep mass and pose.
+                    inertial.remove(inertia)
+                    modified = True
+                    console_logger.debug(
+                        f"Removed invalid <inertia> from {sdf_path.name}"
+                    )
+
+        if modified:
+            tree.write(sdf_path, xml_declaration=True, encoding="utf-8")
+
+    except ET.ParseError as e:
+        console_logger.warning(f"Failed to parse SDF {sdf_path}: {e}")
+
+
 def generate_collision_geometry(
     mesh: trimesh.Trimesh, threshold: float = 0.05, **kwargs
 ) -> list[trimesh.Trimesh]:
@@ -1082,3 +1161,282 @@ def run_simulation(
     final_context = simulator.get_context()
 
     return diagram, initial_state, final_context
+
+
+def create_drake_plant_from_scene_agent(
+    scene: Scene,
+    scene_json_path: Path,
+    assets_dir: Path,
+    time_step: float = 0.01,
+    temp_dir: Path | None = None,
+    weld_to_world: list[str] | None = None,
+    hydroelastic_modulus: float | None = None,
+) -> tuple[DiagramBuilder, MultibodyPlant, SceneGraph, dict[str, str]]:
+    """Create Drake plant from SceneAgent scene using pre-computed SDFs.
+
+    SceneAgent exports SDFs with pre-computed CoACD collision geometry and
+    full inertia properties. This function uses those SDFs directly instead
+    of regenerating collision geometry.
+
+    Key differences from create_drake_plant_from_scene:
+    - Uses pre-computed SDFs (no CoACD/VHACD regeneration)
+    - Meshes are in canonical pose, transforms are applied via Drake directives
+    - Uses full inertia tensors from SDFs (not default mass)
+
+    Args:
+        scene: SceneEval scene (for architecture info).
+        scene_json_path: Path to scene_X.json with object transforms.
+        assets_dir: Path to scene_X/assets/ directory with SDFs.
+        time_step: Drake simulation time step (use >0 for dynamics, 0 for static).
+        temp_dir: Directory for output files. If None, uses tempfile.
+        weld_to_world: List of object IDs to weld to world (make static).
+        hydroelastic_modulus: If set, adds hydroelastic properties to floor.
+            Objects use pre-computed SDFs without modification.
+
+    Returns:
+        Tuple of (builder, plant, scene_graph, obj_id_to_model_name).
+    """
+    import json
+    import math
+    import shutil
+    from scipy.spatial.transform import Rotation
+
+    start_time = time.time()
+
+    weld_to_world = weld_to_world or []
+
+    # Create temporary directory if needed.
+    if temp_dir is None:
+        temp_dir_obj = tempfile.TemporaryDirectory()
+        temp_dir = Path(temp_dir_obj.name)
+    else:
+        temp_dir_obj = None
+        temp_dir = Path(temp_dir)
+        temp_dir.mkdir(parents=True, exist_ok=True)
+
+    # Load scene JSON.
+    with open(scene_json_path) as f:
+        scene_data = json.load(f)
+
+    objects = scene_data.get("scene", {}).get("object", [])
+    obj_id_to_model_name = {}
+    obj_transforms = {}  # obj_id -> (translation, rpy_degrees)
+
+    try:
+        # Process each object.
+        for obj in objects:
+            obj_id = obj["id"]
+            sdf_path = obj.get("sdfPath", "")
+
+            if not sdf_path:
+                console_logger.warning(f"No sdfPath for object {obj_id}, skipping")
+                continue
+
+            # Full path to SDF.
+            full_sdf_path = assets_dir / sdf_path
+            if not full_sdf_path.exists():
+                console_logger.warning(f"SDF not found: {full_sdf_path}, skipping {obj_id}")
+                continue
+
+            # Generate safe model name.
+            safe_name = obj_id.replace(" ", "_").replace("-", "_").lower()
+            model_name = f"obj_{safe_name}"
+            obj_id_to_model_name[obj_id] = model_name
+
+            # Copy SDF and all related files to temp_dir.
+            sdf_dir = full_sdf_path.parent
+            dest_dir = temp_dir / model_name
+            if dest_dir.exists():
+                shutil.rmtree(dest_dir)
+            shutil.copytree(sdf_dir, dest_dir)
+
+            # Fix any invalid inertia values in the copied SDF.
+            # Scene-agent may generate SDFs with zero inertia (e.g., for thin objects).
+            copied_sdf_path = dest_dir / full_sdf_path.name
+            if copied_sdf_path.exists():
+                _fix_invalid_inertia_in_sdf(copied_sdf_path)
+
+            # Extract transform from scene JSON.
+            # Transform is 4x4 column-major matrix.
+            transform_data = obj.get("transform", {}).get("data", [])
+            if len(transform_data) == 16:
+                # Convert column-major to numpy 4x4 matrix.
+                matrix = np.array(transform_data).reshape(4, 4).T  # Transpose for row-major
+                translation = matrix[:3, 3].tolist()
+                rotation_matrix = matrix[:3, :3]
+
+                # Convert rotation matrix to RPY (XYZ Euler angles).
+                rot = Rotation.from_matrix(rotation_matrix)
+                rpy_rad = rot.as_euler('xyz')
+                rpy_deg = [math.degrees(r) for r in rpy_rad]
+
+                obj_transforms[obj_id] = (translation, rpy_deg)
+            else:
+                console_logger.warning(f"Invalid transform for {obj_id}, using identity")
+                obj_transforms[obj_id] = ([0.0, 0.0, 0.0], [0.0, 0.0, 0.0])
+
+        # Use scene-agent's pre-computed floor_plan.sdf if available.
+        # It has correct collision geometry at z=0.
+        # floor_plan.sdf is in the same directory as assets/ (parent of assets_dir).
+        scene_dir = assets_dir.parent
+        floor_plan_src = scene_dir / "floor_plan.sdf"
+        floor_plan_dst = temp_dir / "floor_plan.sdf"
+
+        if floor_plan_src.exists():
+            # Copy floor_plan.sdf and its dependencies.
+            shutil.copy2(floor_plan_src, floor_plan_dst)
+            # Copy floor_plans directory if it exists (contains visual meshes).
+            floor_plans_src = scene_dir / "floor_plans"
+            floor_plans_dst = temp_dir / "floor_plans"
+            if floor_plans_src.exists():
+                if floor_plans_dst.exists():
+                    shutil.rmtree(floor_plans_dst)
+                shutil.copytree(floor_plans_src, floor_plans_dst)
+            else:
+                # floor_plans directory doesn't exist - strip visual elements from SDF
+                # since we only need collision geometry for physics simulation.
+                _strip_visual_elements_from_sdf(floor_plan_dst)
+                console_logger.debug(
+                    f"Stripped visuals from floor_plan.sdf (floor_plans dir not found)"
+                )
+            console_logger.info(f"Using scene-agent floor_plan.sdf: {floor_plan_src}")
+        else:
+            # Fallback: generate floor plan SDF from architecture.
+            console_logger.warning(
+                f"Scene-agent floor_plan.sdf not found at {floor_plan_src}, "
+                "falling back to generated floor plan"
+            )
+            generate_floor_sdf(
+                scene.t_architecture,
+                temp_dir,
+                use_rigid_hydroelastic=(hydroelastic_modulus is not None),
+            )
+
+        # Build Drake directives YAML with transforms.
+        directives_yaml = _build_drake_directives_scene_agent(
+            temp_dir=temp_dir,
+            obj_id_to_model_name=obj_id_to_model_name,
+            obj_transforms=obj_transforms,
+            weld_to_world=weld_to_world,
+            floor_plan_sdf_path=floor_plan_dst,
+        )
+
+        # Write directives to file.
+        directives_path = temp_dir / "scene.dmd.yaml"
+        with open(directives_path, "w") as f:
+            f.write(directives_yaml)
+
+        # Create Drake plant.
+        builder = DiagramBuilder()
+        plant, scene_graph = AddMultibodyPlantSceneGraph(builder, time_step=time_step)
+
+        # Add kLagged contact approximation for stability.
+        if time_step > 0.0:
+            plant.set_discrete_contact_approximation(
+                DiscreteContactApproximation.kLagged
+            )
+
+        # Load directives.
+        directives = LoadModelDirectives(str(directives_path))
+        ProcessModelDirectives(directives, plant, parser=None)
+
+        # Finalize plant.
+        plant.Finalize()
+
+        end_time = time.time()
+        console_logger.info(
+            f"Created Drake plant from SceneAgent with {len(obj_id_to_model_name)} objects in "
+            f"{end_time - start_time:.2f} seconds"
+        )
+
+        return builder, plant, scene_graph, obj_id_to_model_name
+
+    finally:
+        # Clean up temporary directory if we created it.
+        if temp_dir_obj is not None:
+            temp_dir_obj.cleanup()
+
+
+def _build_drake_directives_scene_agent(
+    temp_dir: Path,
+    obj_id_to_model_name: dict[str, str],
+    obj_transforms: dict[str, tuple[list[float], list[float]]],
+    weld_to_world: list[str],
+    floor_plan_sdf_path: Path | None = None,
+) -> str:
+    """Build Drake model directives YAML for SceneAgent with transforms.
+
+    Unlike the world-coords version, this applies actual transforms since
+    SceneAgent meshes are in canonical (object-local) coordinates.
+
+    Args:
+        temp_dir: Directory containing SDF files.
+        obj_id_to_model_name: Mapping from object ID to model name.
+        obj_transforms: Mapping from object ID to (translation, rpy_degrees).
+        weld_to_world: List of object IDs to weld to world.
+        floor_plan_sdf_path: Path to floor_plan.sdf to extract link name.
+
+    Returns:
+        YAML string for Drake directives.
+    """
+    # Ensure absolute path for Drake URIs.
+    temp_dir = Path(temp_dir).resolve()
+
+    # Parse floor_plan.sdf to get the link name.
+    floor_plan_link_name = "base_link"  # Default fallback.
+    if floor_plan_sdf_path and floor_plan_sdf_path.exists():
+        try:
+            tree = ET.parse(floor_plan_sdf_path)
+            root = tree.getroot()
+            # Find the first link in the model.
+            for link in root.iter("link"):
+                link_name = link.get("name")
+                if link_name:
+                    floor_plan_link_name = link_name
+                    break
+        except ET.ParseError:
+            pass
+
+    lines = ["directives:"]
+
+    # Add floor plan (always welded to world - it's static architecture).
+    lines.extend([
+        "- add_model:",
+        f'    name: "floor_plan"',
+        f'    file: "file://{temp_dir}/floor_plan.sdf"',
+        "- add_weld:",
+        '    parent: "world"',
+        f'    child: "floor_plan::{floor_plan_link_name}"',
+    ])
+
+    # Add each object with its transform.
+    for obj_id, model_name in obj_id_to_model_name.items():
+        translation, rpy_deg = obj_transforms.get(obj_id, ([0.0, 0.0, 0.0], [0.0, 0.0, 0.0]))
+
+        # Find the SDF file in the model subdirectory.
+        model_dir = temp_dir / model_name
+        sdf_files = list(model_dir.glob("*.sdf"))
+        if not sdf_files:
+            console_logger.warning(f"No SDF file found in {model_dir}")
+            continue
+        sdf_file = sdf_files[0]
+
+        lines.extend([
+            "- add_model:",
+            f'    name: "{model_name}"',
+            f'    file: "file://{sdf_file}"',
+            f"    default_free_body_pose:",
+            f"      base_link:",
+            f"        translation: [{translation[0]:.6f}, {translation[1]:.6f}, {translation[2]:.6f}]",
+            f"        rotation: !Rpy {{ deg: [{rpy_deg[0]:.6f}, {rpy_deg[1]:.6f}, {rpy_deg[2]:.6f}] }}",
+        ])
+
+        # Weld if requested.
+        if obj_id in weld_to_world:
+            lines.extend([
+                "- add_weld:",
+                '    parent: "world"',
+                f'    child: "{model_name}::base_link"',
+            ])
+
+    return "\n".join(lines)

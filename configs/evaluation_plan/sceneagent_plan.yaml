@@ -1,0 +1,44 @@
+evaluation_cfg:
+  metrics:
+    # VLM-based metrics (require matching result):
+    - ObjCountMetric
+    - ObjAttributeMetric
+    - ObjObjRelationshipMetric
+    - ObjArchRelationshipMetric
+    - SupportMetric
+    - AccessibilityMetric
+    # Non-VLM metrics:
+    - CollisionMetric
+    - NavigabilityMetric
+    - OutOfBoundMetric
+    - OpeningClearanceMetric
+    # SceneAgent-specific Drake metrics (use pre-computed SDFs with CoACD collision geometry):
+    - DrakeCollisionMetricSceneAgent
+    - StaticEquilibriumMetricSceneAgent
+    - WeldedEquilibriumMetricSceneAgent
+  output_dir: ./output_eval
+  save_blend_file: True
+  vlm: GPT
+  use_existing_matching: True
+  use_empty_matching_result: True  # SceneAgent doesn't have matching annotations
+  support_metric_use_existing_support_type_assessment: False
+  no_eval: False
+  verbose: False
+
+input_cfg:
+  root_dir: ./input
+  scene_methods:
+    - SceneAgent
+  method_use_simple_architecture: []
+  scene_mode: range # all, range, list
+  scene_range: [0, 5] # Left inclusive, right exclusive
+  scene_list: []
+  annotation_file: ./input/annotations.csv
+
+render_cfg:
+  normal_render_tasks:
+    - scene_top
+    - obj_solo
+    - obj_surroundings
+  semantic_render_tasks: []
+  semantic_color_reference: null

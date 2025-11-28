@@ -46,3 +46,9 @@ models:
     output_dir_name: ${models.SceneWeaver.input_dir_name}
     asset_datasets:
       - sceneweaver
+
+  SceneAgent:
+    input_dir_name: SceneAgent
+    output_dir_name: ${models.SceneAgent.input_dir_name}
+    asset_datasets:
+      - scene_agent

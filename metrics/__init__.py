@@ -34,6 +34,14 @@ from .architectural_welded_equilibrium import (
     ArchitecturalWeldedEquilibriumMetricVHACD,
     ArchitecturalWeldedEquilibriumMetricConfigVHACD,
 )
+from .drake_scene_agent import (
+    DrakeCollisionMetricSceneAgent,
+    DrakeCollisionMetricSceneAgentConfig,
+    StaticEquilibriumMetricSceneAgent,
+    StaticEquilibriumMetricSceneAgentConfig,
+    WeldedEquilibriumMetricSceneAgent,
+    WeldedEquilibriumMetricSceneAgentConfig,
+)
 
 from .registry import MetricRegistry, register_non_vlm_metric, register_vlm_metric
 
@@ -78,7 +86,13 @@ __all__ = [
     "ArchitecturalWeldedEquilibriumMetricConfigCoACD",
     "ArchitecturalWeldedEquilibriumMetricVHACD",
     "ArchitecturalWeldedEquilibriumMetricConfigVHACD",
-
+    # SceneAgent Drake metrics (use pre-computed SDFs with CoACD)
+    "DrakeCollisionMetricSceneAgent",
+    "DrakeCollisionMetricSceneAgentConfig",
+    "StaticEquilibriumMetricSceneAgent",
+    "StaticEquilibriumMetricSceneAgentConfig",
+    "WeldedEquilibriumMetricSceneAgent",
+    "WeldedEquilibriumMetricSceneAgentConfig",
     # Registry components
     "MetricRegistry",
     "register_non_vlm_metric",
