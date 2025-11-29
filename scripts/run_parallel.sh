@@ -40,6 +40,29 @@ mkdir -p "$LOG_DIR"
 SCENES_PER_WORKER=$((TOTAL_SCENES / NUM_WORKERS))
 PIDS=()
 
+# Cleanup function to kill all workers
+cleanup() {
+    echo ""
+    echo "Caught signal, terminating workers..."
+    for pid in "${PIDS[@]}"; do
+        if kill -0 "$pid" 2>/dev/null; then
+            kill "$pid" 2>/dev/null
+        fi
+    done
+    # Wait briefly for graceful shutdown, then force kill
+    sleep 1
+    for pid in "${PIDS[@]}"; do
+        if kill -0 "$pid" 2>/dev/null; then
+            kill -9 "$pid" 2>/dev/null
+        fi
+    done
+    echo "Workers terminated."
+    exit 130
+}
+
+# Trap signals to ensure cleanup
+trap cleanup INT TERM EXIT
+
 echo "========================================"
 echo "Parallel Scene Evaluation"
 echo "========================================"
@@ -94,6 +117,10 @@ done
 
 echo ""
 echo "========================================"
+
+# Disable EXIT trap for normal completion
+trap - EXIT
+
 if [ $FAILED -eq 1 ]; then
     echo "SOME WORKERS FAILED: ${FAILED_WORKERS[*]}"
     echo "Check ${LOG_DIR}/worker_*.log for details"

@@ -1,7 +1,7 @@
 from .retriever import Retriever
 
 # Import all dataset implementations to ensure they are registered
-from . import threed_future, objathor, hssd, layoutvlm_objathor, sceneweaver, scene_agent
+from . import threed_future, objathor, hssd, layoutvlm_objathor, sceneweaver, scene_agent, idesign
 
 __all__ = [
     "Retriever",

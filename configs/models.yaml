@@ -52,3 +52,9 @@ models:
     output_dir_name: ${models.SceneAgent.input_dir_name}
     asset_datasets:
       - scene_agent
+
+  IDesign:
+    input_dir_name: IDesign
+    output_dir_name: ${models.IDesign.input_dir_name}
+    asset_datasets:
+      - idesign

@@ -174,7 +174,7 @@ output_eval/
 *.png
 .DS_Store
 *.zip
-
+logs
 # ----------------------------- Exclude specific files
 !input/empty_scene.json
 !input/human.glb

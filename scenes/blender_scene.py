@@ -386,7 +386,13 @@ class BlenderScene:
         
         # NOTE: This fixes the orientation for some asset types but NOT for SceneWeaver or Scene Agent
         # SceneWeaver and Scene Agent exports are already correctly oriented (Z-up via glTF Y-up conversion)
-        if not obj.model_id.startswith("sceneweaver") and not obj.model_id.startswith("scene-agent"):
+        if not obj.model_id.startswith("sceneweaver") and not obj.model_id.startswith("scene-agent") and not obj.model_id.startswith("idesign"):
+            neg_90_x = Matrix.Rotation(-np.pi / 2, 4, "X")
+            b_new_obj.matrix_world = b_new_obj.matrix_world @ neg_90_x
+
+        # IDesign GLBs are already in Z-up (baked during conversion), but Blender's gltf importer
+        # automatically applies Y-up to Z-up conversion. We need to undo that.
+        if obj.model_id.startswith("idesign"):
             neg_90_x = Matrix.Rotation(-np.pi / 2, 4, "X")
             b_new_obj.matrix_world = b_new_obj.matrix_world @ neg_90_x
         self.update()

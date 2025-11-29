@@ -105,6 +105,7 @@ class TrimeshScene:
 
         # Apply 90° X rotation for SceneWeaver/SceneAgent to convert glTF Y-up to Z-up
         # MUST be applied BEFORE scene_transform (while mesh is still at origin)
+        # NOTE: IDesign GLBs have transforms baked into vertices during conversion, so no rotation needed
         if obj.model_id.startswith("sceneweaver") or obj.model_id.startswith("scene-agent"):
             y_up_to_z_up = trimesh.transformations.rotation_matrix(np.pi / 2, [1, 0, 0])
             mesh.apply_transform(y_up_to_z_up)
