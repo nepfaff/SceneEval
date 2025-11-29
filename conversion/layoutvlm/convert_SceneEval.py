@@ -278,32 +278,26 @@ def convert_single_scene(
     if program_path.exists():
         asset_metadata = parse_sandbox_program(program_path)
 
-    # Build mapping from asset_var_name-idx to objaverse_id
-    # scene.json assets are keyed like "25134a84c07e420b93cae181731fd7a0-0"
-    # where the number after dash is the index
-    objaverse_id_map = {}  # Maps "drawer-0" style to objaverse ID
+    # Build mapping from asset key (e.g., "bed-0") to objaverse UID
+    # scene.json assets have keys like "bed-0" with a "uid" field containing the objaverse ID
+    asset_uid_map = {}  # Maps "bed-0" -> objaverse UID
 
-    # Group assets by their base variable name
-    asset_groups = {}  # var_name -> list of (idx, objaverse_id)
-
-    for asset_key in scene_data.get("assets", {}).keys():
-        # Split "25134a84c07e420b93cae181731fd7a0-0" into id and index
-        parts = asset_key.rsplit("-", 1)
-        if len(parts) == 2:
-            objaverse_id = parts[0]
-            idx = int(parts[1])
-
-            # Store with index
-            if objaverse_id not in asset_groups:
-                asset_groups[objaverse_id] = []
-            asset_groups[objaverse_id].append(idx)
-
-    # Now match layout.json keys to objaverse IDs
-    # layout.json has keys like "drawer-0", "desk-0", etc.
-    # We need to match these to the objaverse IDs in order
+    for asset_key, asset_data in scene_data.get("assets", {}).items():
+        # Get the objaverse UID from the 'uid' field
+        objaverse_uid = asset_data.get("uid")
+        if objaverse_uid:
+            asset_uid_map[asset_key] = objaverse_uid
+        else:
+            # Fallback: try parsing from key if no uid field (older format)
+            parts = asset_key.rsplit("-", 1)
+            if len(parts) == 2 and len(parts[0]) == 32:  # Looks like objaverse ID
+                asset_uid_map[asset_key] = parts[0]
+            else:
+                print(f"  Warning: No uid found for asset {asset_key}")
+                asset_uid_map[asset_key] = asset_key.rsplit("-", 1)[0]  # Use name as fallback
 
     layout_keys = list(layout_data.keys())
-    objaverse_ids = list(scene_data.get("assets", {}).keys())
+    scene_asset_keys = list(scene_data.get("assets", {}).keys())
 
     # Create the output scene state
     output = json.loads(json.dumps(SCENE_STATE_JSON_BASE))
@@ -316,19 +310,16 @@ def convert_single_scene(
     output["scene"]["arch"]["regions"][0]["walls"] = wall_ids
 
     # Process objects
-    # Match layout_keys to objaverse_ids in order
+    # Match layout_keys to scene_asset_keys in order (they should correspond)
     objects = []
 
-    for i, (layout_key, objaverse_key) in enumerate(zip(layout_keys, objaverse_ids)):
+    for i, (layout_key, asset_key) in enumerate(zip(layout_keys, scene_asset_keys)):
         layout_info = layout_data[layout_key]
         position = layout_info.get("position", [0, 0, 0])
         rotation = layout_info.get("rotation", [0, 0, 0])
 
-        # Extract objaverse ID (remove instance suffix)
-        objaverse_id = objaverse_key.rsplit("-", 1)[0]
-
-        # Get var_name from layout_key (e.g., "drawer-0" -> "drawer")
-        var_name = layout_key.rsplit("-", 1)[0] if "-" in layout_key else layout_key
+        # Get objaverse UID from our mapping
+        objaverse_uid = asset_uid_map.get(asset_key, asset_key.rsplit("-", 1)[0])
 
         # Create transform
         transform = create_transform(position, rotation)
@@ -336,7 +327,7 @@ def convert_single_scene(
         obj = {
             "id": str(i + 1),
             "index": i,
-            "modelId": f"layoutvlm-objaverse.{objaverse_id}",
+            "modelId": f"layoutvlm-objaverse.{objaverse_uid}",
             "parentId": "",
             "parentIndex": i,
             "transform": transform
