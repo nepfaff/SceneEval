@@ -16,8 +16,10 @@ evaluation_cfg:
     - DrakeCollisionMetricSceneAgent
     - StaticEquilibriumMetricSceneAgent
     - WeldedEquilibriumMetricSceneAgent
+    - ArchitecturalWeldedEquilibriumMetricSceneAgent
   output_dir: ./output_eval
   save_blend_file: True
+  save_trimesh_glb: False
   vlm: GPT
   use_existing_matching: True
   use_empty_matching_result: False

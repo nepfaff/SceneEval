@@ -41,6 +41,8 @@ from .drake_scene_agent import (
     StaticEquilibriumMetricSceneAgentConfig,
     WeldedEquilibriumMetricSceneAgent,
     WeldedEquilibriumMetricSceneAgentConfig,
+    ArchitecturalWeldedEquilibriumMetricSceneAgent,
+    ArchitecturalWeldedEquilibriumMetricSceneAgentConfig,
 )
 
 from .registry import MetricRegistry, register_non_vlm_metric, register_vlm_metric
@@ -93,6 +95,8 @@ __all__ = [
     "StaticEquilibriumMetricSceneAgentConfig",
     "WeldedEquilibriumMetricSceneAgent",
     "WeldedEquilibriumMetricSceneAgentConfig",
+    "ArchitecturalWeldedEquilibriumMetricSceneAgent",
+    "ArchitecturalWeldedEquilibriumMetricSceneAgentConfig",
     # Registry components
     "MetricRegistry",
     "register_non_vlm_metric",

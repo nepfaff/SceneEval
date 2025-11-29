@@ -66,7 +66,7 @@ def _strip_visual_elements_from_sdf(sdf_path: Path) -> None:
 
         if modified:
             tree.write(sdf_path, xml_declaration=True, encoding="utf-8")
-            console_logger.debug(f"Stripped visual elements from {sdf_path.name}")
+            console_logger.info(f"Stripped visual elements from {sdf_path.name}")
 
     except ET.ParseError as e:
         console_logger.warning(f"Failed to parse SDF {sdf_path}: {e}")
@@ -110,7 +110,7 @@ def _fix_invalid_inertia_in_sdf(sdf_path: Path) -> None:
                     # Remove the inertia element, keep mass and pose.
                     inertial.remove(inertia)
                     modified = True
-                    console_logger.debug(
+                    console_logger.info(
                         f"Removed invalid <inertia> from {sdf_path.name}"
                     )
 
@@ -275,7 +275,8 @@ def test_object_hydroelastic_in_drake(
     # Build collision elements for all pieces.
     collision_elements = []
     for i, mesh_path in enumerate(mesh_paths):
-        collision_elements.append(f"""
+        collision_elements.append(
+            f"""
       <collision name="collision_{i}">
         <geometry>
           <mesh>
@@ -287,7 +288,8 @@ def test_object_hydroelastic_in_drake(
           <drake:compliant_hydroelastic/>
           <drake:hydroelastic_modulus>{hydroelastic_modulus:.3e}</drake:hydroelastic_modulus>
         </drake:proximity_properties>
-      </collision>""")
+      </collision>"""
+        )
 
     # Create a minimal SDF with all pieces.
     sdf_content = f"""<?xml version="1.0"?>
@@ -368,7 +370,9 @@ directives:
             # Build Drake plant.
             builder = DiagramBuilder()
             plant, scene_graph = AddMultibodyPlantSceneGraph(builder, time_step=1e-2)
-            plant.set_discrete_contact_approximation(DiscreteContactApproximation.kLagged)
+            plant.set_discrete_contact_approximation(
+                DiscreteContactApproximation.kLagged
+            )
 
             directives = LoadModelDirectives(str(directives_path))
             ProcessModelDirectives(directives, plant, parser=None)
@@ -415,9 +419,7 @@ def add_compliant_proximity_properties_element(
         collision_item, "{drake.mit.edu}proximity_properties"
     )
     ET.SubElement(proximity_item, "{drake.mit.edu}compliant_hydroelastic")
-    modulus_item = ET.SubElement(
-        proximity_item, "{drake.mit.edu}hydroelastic_modulus"
-    )
+    modulus_item = ET.SubElement(proximity_item, "{drake.mit.edu}hydroelastic_modulus")
     modulus_item.text = f"{hydroelastic_modulus:.3e}"
     if hunt_crossley_dissipation is not None:
         dissipation_item = ET.SubElement(
@@ -768,7 +770,11 @@ def create_drake_plant_from_scene(
 
         for obj_id in obj_ids:
             # Skip architecture objects (floor, walls) - they're handled separately.
-            if "architecture" in obj_id.lower() or "floor" in obj_id.lower() or "wall" in obj_id.lower():
+            if (
+                "architecture" in obj_id.lower()
+                or "floor" in obj_id.lower()
+                or "wall" in obj_id.lower()
+            ):
                 console_logger.info(f"Skipping architecture object: {obj_id}")
                 continue
 
@@ -888,34 +894,40 @@ def _build_drake_directives_world_coords(
     lines = ["directives:"]
 
     # Add floor plan (always welded to world - it's static architecture).
-    lines.extend([
-        "- add_model:",
-        f'    name: "floor_plan"',
-        f'    file: "file://{temp_dir}/floor_plan.sdf"',
-        "- add_weld:",
-        '    parent: "world"',
-        '    child: "floor_plan::base_link"',
-    ])
+    lines.extend(
+        [
+            "- add_model:",
+            f'    name: "floor_plan"',
+            f'    file: "file://{temp_dir}/floor_plan.sdf"',
+            "- add_weld:",
+            '    parent: "world"',
+            '    child: "floor_plan::base_link"',
+        ]
+    )
 
     # Add each object at origin (mesh is already in world coords).
     for obj_id, model_name in obj_id_to_model_name.items():
-        lines.extend([
-            "- add_model:",
-            f'    name: "{model_name}"',
-            f'    file: "file://{temp_dir}/{model_name}.sdf"',
-            f"    default_free_body_pose:",
-            f"      base_link:",
-            f"        translation: [0.0, 0.0, 0.0]",
-            f"        rotation: !Rpy {{ deg: [0.0, 0.0, 0.0] }}",
-        ])
+        lines.extend(
+            [
+                "- add_model:",
+                f'    name: "{model_name}"',
+                f'    file: "file://{temp_dir}/{model_name}.sdf"',
+                f"    default_free_body_pose:",
+                f"      base_link:",
+                f"        translation: [0.0, 0.0, 0.0]",
+                f"        rotation: !Rpy {{ deg: [0.0, 0.0, 0.0] }}",
+            ]
+        )
 
         # Weld if requested and welds are enabled.
         if include_welds and obj_id in weld_to_world:
-            lines.extend([
-                "- add_weld:",
-                '    parent: "world"',
-                f'    child: "{model_name}::base_link"',
-            ])
+            lines.extend(
+                [
+                    "- add_weld:",
+                    '    parent: "world"',
+                    f'    child: "{model_name}::base_link"',
+                ]
+            )
 
     return "\n".join(lines)
 
@@ -952,19 +964,15 @@ def detect_penetrating_pairs(
     # Get all collision geometry IDs.
     geometry_ids = list(inspector.GetAllGeometryIds())
     collision_geometry_ids = [
-        gid
-        for gid in geometry_ids
-        if inspector.GetProximityProperties(gid) is not None
+        gid for gid in geometry_ids if inspector.GetProximityProperties(gid) is not None
     ]
 
-    console_logger.debug(
-        f"Found {len(collision_geometry_ids)} collision geometries"
-    )
+    console_logger.info(f"Found {len(collision_geometry_ids)} collision geometries")
 
     # Check all pairs.
     penetrating_pairs = []
     for i, gid_a in enumerate(collision_geometry_ids):
-        for gid_b in collision_geometry_ids[i + 1:]:
+        for gid_b in collision_geometry_ids[i + 1 :]:
             try:
                 distance_result = query_object.ComputeSignedDistancePairClosestPoints(
                     geometry_id_A=gid_a, geometry_id_B=gid_b
@@ -989,9 +997,7 @@ def detect_penetrating_pairs(
                     penetrating_pairs.append((obj_a, obj_b, penetration_depth))
 
             except Exception as e:
-                console_logger.debug(
-                    f"Collision check failed for geometry pair: {e}"
-                )
+                console_logger.info(f"Collision check failed for geometry pair: {e}")
 
     # Deduplicate pairs.
     seen = set()
@@ -1039,7 +1045,9 @@ def measure_displacement(
     for obj_id, model_name in obj_id_to_model_name.items():
         try:
             # Get body.
-            body = plant.GetBodyByName("base_link", plant.GetModelInstanceByName(model_name))
+            body = plant.GetBodyByName(
+                "base_link", plant.GetModelInstanceByName(model_name)
+            )
 
             # Get initial and final poses.
             initial_pose = plant.EvalBodyPoseInWorld(initial_context, body)
@@ -1241,7 +1249,9 @@ def create_drake_plant_from_scene_agent(
             # Full path to SDF.
             full_sdf_path = assets_dir / sdf_path
             if not full_sdf_path.exists():
-                console_logger.warning(f"SDF not found: {full_sdf_path}, skipping {obj_id}")
+                console_logger.warning(
+                    f"SDF not found: {full_sdf_path}, skipping {obj_id}"
+                )
                 continue
 
             # Generate safe model name.
@@ -1267,18 +1277,22 @@ def create_drake_plant_from_scene_agent(
             transform_data = obj.get("transform", {}).get("data", [])
             if len(transform_data) == 16:
                 # Convert column-major to numpy 4x4 matrix.
-                matrix = np.array(transform_data).reshape(4, 4).T  # Transpose for row-major
+                matrix = (
+                    np.array(transform_data).reshape(4, 4).T
+                )  # Transpose for row-major
                 translation = matrix[:3, 3].tolist()
                 rotation_matrix = matrix[:3, :3]
 
                 # Convert rotation matrix to RPY (XYZ Euler angles).
                 rot = Rotation.from_matrix(rotation_matrix)
-                rpy_rad = rot.as_euler('xyz')
+                rpy_rad = rot.as_euler("xyz")
                 rpy_deg = [math.degrees(r) for r in rpy_rad]
 
                 obj_transforms[obj_id] = (translation, rpy_deg)
             else:
-                console_logger.warning(f"Invalid transform for {obj_id}, using identity")
+                console_logger.warning(
+                    f"Invalid transform for {obj_id}, using identity"
+                )
                 obj_transforms[obj_id] = ([0.0, 0.0, 0.0], [0.0, 0.0, 0.0])
 
         # Use scene-agent's pre-computed floor_plan.sdf if available.
@@ -1302,7 +1316,7 @@ def create_drake_plant_from_scene_agent(
                 # floor_plans directory doesn't exist - strip visual elements from SDF
                 # since we only need collision geometry for physics simulation.
                 _strip_visual_elements_from_sdf(floor_plan_dst)
-                console_logger.debug(
+                console_logger.info(
                     f"Stripped visuals from floor_plan.sdf (floor_plans dir not found)"
                 )
             console_logger.info(f"Using scene-agent floor_plan.sdf: {floor_plan_src}")
@@ -1406,18 +1420,22 @@ def _build_drake_directives_scene_agent(
     lines = ["directives:"]
 
     # Add floor plan (always welded to world - it's static architecture).
-    lines.extend([
-        "- add_model:",
-        f'    name: "floor_plan"',
-        f'    file: "file://{temp_dir}/floor_plan.sdf"',
-        "- add_weld:",
-        '    parent: "world"',
-        f'    child: "floor_plan::{floor_plan_link_name}"',
-    ])
+    lines.extend(
+        [
+            "- add_model:",
+            f'    name: "floor_plan"',
+            f'    file: "file://{temp_dir}/floor_plan.sdf"',
+            "- add_weld:",
+            '    parent: "world"',
+            f'    child: "floor_plan::{floor_plan_link_name}"',
+        ]
+    )
 
     # Add each object with its transform.
     for obj_id, model_name in obj_id_to_model_name.items():
-        translation, rpy_deg = obj_transforms.get(obj_id, ([0.0, 0.0, 0.0], [0.0, 0.0, 0.0]))
+        translation, rpy_deg = obj_transforms.get(
+            obj_id, ([0.0, 0.0, 0.0], [0.0, 0.0, 0.0])
+        )
 
         # Find the SDF file in the model subdirectory.
         model_dir = temp_dir / model_name
@@ -1427,22 +1445,26 @@ def _build_drake_directives_scene_agent(
             continue
         sdf_file = sdf_files[0]
 
-        lines.extend([
-            "- add_model:",
-            f'    name: "{model_name}"',
-            f'    file: "file://{sdf_file}"',
-            f"    default_free_body_pose:",
-            f"      base_link:",
-            f"        translation: [{translation[0]:.6f}, {translation[1]:.6f}, {translation[2]:.6f}]",
-            f"        rotation: !Rpy {{ deg: [{rpy_deg[0]:.6f}, {rpy_deg[1]:.6f}, {rpy_deg[2]:.6f}] }}",
-        ])
+        lines.extend(
+            [
+                "- add_model:",
+                f'    name: "{model_name}"',
+                f'    file: "file://{sdf_file}"',
+                f"    default_free_body_pose:",
+                f"      base_link:",
+                f"        translation: [{translation[0]:.6f}, {translation[1]:.6f}, {translation[2]:.6f}]",
+                f"        rotation: !Rpy {{ deg: [{rpy_deg[0]:.6f}, {rpy_deg[1]:.6f}, {rpy_deg[2]:.6f}] }}",
+            ]
+        )
 
         # Weld if requested.
         if obj_id in weld_to_world:
-            lines.extend([
-                "- add_weld:",
-                '    parent: "world"',
-                f'    child: "{model_name}::base_link"',
-            ])
+            lines.extend(
+                [
+                    "- add_weld:",
+                    '    parent: "world"',
+                    f'    child: "{model_name}::base_link"',
+                ]
+            )
 
     return "\n".join(lines)

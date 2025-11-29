@@ -328,4 +328,14 @@ class Scene:
         """
 
         self.trimesh_scene.show()
+
+    def export_trimesh(self, file_path: str) -> None:
+        """
+        Export the trimesh scene to a file (e.g., GLB for debugging).
+
+        Args:
+            file_path: the path to export to (e.g., "debug_trimesh.glb")
+        """
+
+        self.trimesh_scene.export(file_path)
         

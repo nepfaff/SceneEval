@@ -702,3 +702,232 @@ class WeldedEquilibriumMetricSceneAgent(BaseMetric):
             print(f"\n{result.message}\n")
 
         return result
+
+
+@dataclass
+class ArchitecturalWeldedEquilibriumMetricSceneAgentConfig:
+    """Configuration for the architectural welded equilibrium metric for SceneAgent.
+
+    This metric welds objects supported by architectural elements (floor, wall,
+    ceiling) to world, while letting objects supported by other objects move freely.
+
+    Attributes:
+        simulation_time: Time to simulate in seconds.
+        time_step: Drake simulation time step.
+        displacement_threshold: Maximum displacement for an object to be "stable" (meters).
+        rotation_threshold: Maximum rotation for an object to be "stable" (radians).
+        save_simulation_html: If True, save meshcat visualization to HTML file.
+    """
+
+    simulation_time: float = 5.0
+    time_step: float = 0.001
+    displacement_threshold: float = 0.01
+    rotation_threshold: float = 0.1
+    save_simulation_html: bool = True
+
+
+@register_non_vlm_metric(config_class=ArchitecturalWeldedEquilibriumMetricSceneAgentConfig)
+class ArchitecturalWeldedEquilibriumMetricSceneAgent(BaseMetric):
+    """Architectural welded equilibrium metric for SceneAgent.
+
+    Welds objects supported by architectural elements (floor, wall, ceiling) to
+    world, while letting objects supported by other objects move freely. Uses
+    SceneAgent's pre-computed CoACD SDFs with full inertia tensors.
+
+    Unlike WeldedEquilibriumMetricSceneAgent which welds penetrating objects,
+    this metric welds based on support type from obj_support_type_result.json.
+    """
+
+    drake_scene_folder: str = "architectural_welded_equilibrium_scene_agent"
+
+    def __init__(self, scene: Scene, output_dir: pathlib.Path, cfg, **kwargs) -> None:
+        self.scene = scene
+        self.output_dir = output_dir
+        self.cfg = cfg
+
+    def _get_architectural_objects(self) -> list[str]:
+        """Get object IDs for objects supported by architectural elements.
+
+        Returns:
+            List of object IDs that are supported by floor, wall, or ceiling.
+        """
+        support_type_file = self.scene.output_dir / "obj_support_type_result.json"
+        if not support_type_file.exists():
+            return []
+
+        with open(support_type_file) as f:
+            support_types = json.load(f)
+
+        return [
+            obj_id for obj_id, support_type in support_types.items()
+            if support_type in ("ground", "wall", "ceiling")
+        ]
+
+    def run(self, verbose: bool = False) -> MetricResult:
+        # Get SceneAgent-specific paths
+        scene_json_path, assets_dir = _get_scene_agent_paths(self.output_dir)
+
+        # Validate paths exist
+        if not scene_json_path.exists():
+            return MetricResult(
+                message=f"SceneAgent scene JSON not found: {scene_json_path}",
+                data={"error": f"Scene JSON not found: {scene_json_path}"},
+            )
+        if not assets_dir.exists():
+            return MetricResult(
+                message=f"SceneAgent assets dir not found: {assets_dir}",
+                data={"error": f"Assets dir not found: {assets_dir}"},
+            )
+
+        drake_scene_dir = self.output_dir / self.drake_scene_folder
+        drake_scene_dir.mkdir(parents=True, exist_ok=True)
+
+        # Get architectural objects to weld
+        objects_to_weld = self._get_architectural_objects()
+        if verbose and objects_to_weld:
+            print(f"Welding architectural objects: {objects_to_weld}")
+
+        # Create Drake plant with dynamics (single plant, no penetration detection)
+        builder, plant, scene_graph, obj_id_to_model_name = create_drake_plant_from_scene_agent(
+            scene=self.scene,
+            scene_json_path=scene_json_path,
+            assets_dir=assets_dir,
+            time_step=self.cfg.time_step,
+            temp_dir=drake_scene_dir / "simulation",
+            weld_to_world=objects_to_weld,
+        )
+
+        # Determine HTML output path if visualization is enabled
+        html_path = None
+        if getattr(self.cfg, "save_simulation_html", False):
+            html_path = drake_scene_dir / "simulation" / "simulation.html"
+
+        # Run simulation
+        diagram, initial_context, final_context = run_simulation(
+            builder=builder,
+            plant=plant,
+            simulation_time=self.cfg.simulation_time,
+            scene_graph=scene_graph,
+            output_html_path=html_path,
+        )
+
+        # Get plant contexts
+        initial_plant_context = plant.GetMyContextFromRoot(initial_context)
+        final_plant_context = plant.GetMyContextFromRoot(final_context)
+
+        # Measure displacement for non-welded objects only
+        non_welded_obj_id_to_model_name = {
+            obj_id: model_name
+            for obj_id, model_name in obj_id_to_model_name.items()
+            if obj_id not in objects_to_weld
+        }
+
+        displacement_results = measure_displacement(
+            plant=plant,
+            initial_context=initial_plant_context,
+            final_context=final_plant_context,
+            obj_id_to_model_name=non_welded_obj_id_to_model_name,
+        )
+
+        # Compute per-object stability and aggregate statistics
+        per_object_results = {}
+        displacements = []
+        rotations = []
+
+        # Process non-welded objects
+        for obj_id, data in displacement_results.items():
+            displacement = data["displacement"]
+            rotation = data["rotation"]
+
+            stable = (
+                not np.isnan(displacement)
+                and not np.isnan(rotation)
+                and displacement <= self.cfg.displacement_threshold
+                and rotation <= self.cfg.rotation_threshold
+            )
+
+            per_object_results[obj_id] = {
+                "stable": stable,
+                "displacement": displacement,
+                "rotation": rotation,
+                "initial_position": data["initial_position"],
+                "final_position": data["final_position"],
+                "welded": False,
+            }
+
+            if not np.isnan(displacement):
+                displacements.append(displacement)
+            if not np.isnan(rotation):
+                rotations.append(rotation)
+
+        # Add welded objects (they have zero displacement by definition)
+        for obj_id in objects_to_weld:
+            per_object_results[obj_id] = {
+                "stable": True,
+                "displacement": 0.0,
+                "rotation": 0.0,
+                "initial_position": None,
+                "final_position": None,
+                "welded": True,
+                "weld_reason": "architectural_support",
+            }
+
+        # Compute aggregate statistics (only for non-welded objects)
+        num_stable = sum(
+            1 for r in per_object_results.values()
+            if r["stable"] and not r.get("welded", False)
+        )
+        num_unstable = sum(
+            1 for r in per_object_results.values()
+            if not r["stable"] and not r.get("welded", False)
+        )
+        num_non_welded = num_stable + num_unstable
+        scene_stable = num_unstable == 0
+
+        max_displacement = max(displacements) if displacements else 0.0
+        mean_displacement = np.mean(displacements) if displacements else 0.0
+        total_displacement = sum(displacements)
+
+        max_rotation = max(rotations) if rotations else 0.0
+        mean_rotation = np.mean(rotations) if rotations else 0.0
+
+        result = MetricResult(
+            message=(
+                f"Architectural welded equilibrium (SceneAgent CoACD): scene_stable={scene_stable}, "
+                f"{num_stable}/{num_non_welded} stable (non-welded) objects, "
+                f"{len(objects_to_weld)} welded (architectural), "
+                f"mean_displacement={mean_displacement:.4f}m, "
+                f"max_displacement={max_displacement:.4f}m"
+            ),
+            data={
+                "scene_stable": scene_stable,
+                "num_stable_objects": num_stable,
+                "num_unstable_objects": num_unstable,
+                "max_displacement": float(max_displacement),
+                "mean_displacement": float(mean_displacement),
+                "max_rotation": float(max_rotation),
+                "mean_rotation": float(mean_rotation),
+                "total_displacement": float(total_displacement),
+                "per_object_results": per_object_results,
+                "welded_objects": objects_to_weld,
+                "num_welded_objects": len(objects_to_weld),
+                "decomposition_method": "coacd",
+                "source": "scene_agent_precomputed",
+            },
+        )
+
+        if verbose:
+            print(f"\n{result.message}\n")
+            print("Non-welded objects:")
+            for obj_id, obj_result in per_object_results.items():
+                if not obj_result.get("welded", False):
+                    status = "STABLE" if obj_result["stable"] else "UNSTABLE"
+                    print(
+                        f"  {obj_id}: {status} "
+                        f"(displacement={obj_result['displacement']:.4f}m, "
+                        f"rotation={obj_result['rotation']:.4f}rad)"
+                    )
+            if objects_to_weld:
+                print(f"\nWelded objects (architectural support): {objects_to_weld}")
+
+        return result

@@ -28,6 +28,7 @@ class EvaluationConfig:
     metrics: list[str]
     output_dir: str
     save_blend_file: bool
+    save_trimesh_glb: bool
     vlm: str
     use_existing_matching: bool
     use_empty_matching_result: bool
@@ -525,6 +526,10 @@ def main(cfg: DictConfig) -> None:
                 # Save the Blender scene for reference if configured
                 if evaluation_plan.evaluation_cfg.save_blend_file:
                     scene.blender_scene.save_blend()
+
+                # Save trimesh scene as GLB for debugging coordinate transforms
+                if evaluation_plan.evaluation_cfg.save_trimesh_glb:
+                    scene.export_trimesh(str(output_dir / "trimesh_scene.glb"))
 
                 # ---------------------------------------------------
 

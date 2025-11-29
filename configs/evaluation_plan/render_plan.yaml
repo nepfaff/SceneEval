@@ -12,6 +12,7 @@ evaluation_cfg:
     # - OpeningClearanceMetric
   output_dir: ./output_eval
   save_blend_file: True
+  save_trimesh_glb: True
   vlm: GPT
   use_existing_matching: True
   use_empty_matching_result: False

@@ -103,10 +103,16 @@ class TrimeshScene:
         if extra_rotation_transform is not None:
             mesh.apply_transform(extra_rotation_transform)
 
+        # Apply 90° X rotation for SceneWeaver/SceneAgent to convert glTF Y-up to Z-up
+        # MUST be applied BEFORE scene_transform (while mesh is still at origin)
+        if obj.model_id.startswith("sceneweaver") or obj.model_id.startswith("scene-agent"):
+            y_up_to_z_up = trimesh.transformations.rotation_matrix(np.pi / 2, [1, 0, 0])
+            mesh.apply_transform(y_up_to_z_up)
+
         # Apply the object's transform from the scene state (how the object is placed in the scene)
         scene_transform = np.asarray(obj.transform.data).reshape(4, 4).T
         mesh.apply_transform(scene_transform)
-        
+
         # Fix the mesh if it is inverted for objaverse objects
         if "objaverse" in obj.model_id:
             trimesh.repair.fix_inversion(mesh)
@@ -317,3 +323,22 @@ class TrimeshScene:
         """
 
         self.t_scene.show()
+
+    def export(self, file_path: str, convert_to_y_up: bool = True) -> None:
+        """
+        Export the scene to a file (e.g., GLB for debugging).
+
+        Args:
+            file_path: the path to export to (e.g., "debug_scene.glb")
+            convert_to_y_up: if True, apply Z-up to Y-up conversion for glTF convention
+        """
+
+        if convert_to_y_up:
+            # Create a copy of the scene and apply Z-up to Y-up conversion (+90° X rotation)
+            # glTF convention is Y-up, but our scene is Z-up
+            export_scene = self.t_scene.copy()
+            z_up_to_y_up = trimesh.transformations.rotation_matrix(np.pi / 2, [1, 0, 0])
+            export_scene.apply_transform(z_up_to_y_up)
+            export_scene.export(file_path)
+        else:
+            self.t_scene.export(file_path)

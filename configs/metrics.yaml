@@ -227,3 +227,12 @@ metrics: # Use metric class names as keys (i.e., CamelCase)
     penetration_threshold: 0.001
     weld_wall_ceiling_objects: true
     save_simulation_html: true
+
+  # Architectural welded equilibrium metric for SceneAgent
+  # Welds floor, wall, ceiling supported objects - only "object" type objects move freely
+  ArchitecturalWeldedEquilibriumMetricSceneAgent:
+    simulation_time: 5.0
+    time_step: 1.0e-3
+    displacement_threshold: 0.01
+    rotation_threshold: 0.1
+    save_simulation_html: true
