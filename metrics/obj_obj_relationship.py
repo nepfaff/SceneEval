@@ -1,3 +1,4 @@
+import logging
 import pathlib
 from warnings import warn
 from dataclasses import dataclass, field
@@ -10,6 +11,8 @@ from spatial import BoundingBox, BoundingBoxConfig, SpatialRelationEvaluator, Sp
 from .base import BaseMetric, MetricResult
 from .obj_matching import ObjMatchingResults
 from .registry import register_vlm_metric
+
+logger = logging.getLogger(__name__)
 
 # ----------------------------------------------------------------------------------------
 
@@ -83,7 +86,10 @@ class ObjObjRelationshipMetric(BaseMetric):
         self.vlm.reset()
 
         self.obj_obj_relationship_specs = self.annotation.oo_rel
-        self.spatial_relation_evaluator = SpatialRelationEvaluator(self.cfg.spatial_relation)
+        self.spatial_relation_evaluator = SpatialRelationEvaluator(
+            self.cfg.spatial_relation,
+            front_vector=self.scene.get_front_vector()
+        )
     
     def run(self, verbose: bool = False) -> MetricResult:
         """
@@ -105,7 +111,7 @@ class ObjObjRelationshipMetric(BaseMetric):
                 message="No object-object relationship specs to evaluate.",
                 data=evaluations
             )
-            print(f"\n{result.message}\n")
+            logger.info(f"\n{result.message}\n")
             return result
 
         # ==========================================================================================
@@ -130,7 +136,7 @@ class ObjObjRelationshipMetric(BaseMetric):
                 "satisfied": False
             }
             
-            print(f"Checking object presence for {spec}...")
+            logger.info(f"Checking object presence for {spec}...")
             
             # Extract the base categories and the number of times they are mentioned in the spec
             category_info = {}
@@ -146,14 +152,14 @@ class ObjObjRelationshipMetric(BaseMetric):
             if not all([num_in_scene[i] >= num_needed for i, num_needed in enumerate(category_info.values())]):
                 evaluations[spec]["all_objects_present"] = False
                 evaluations[spec]["satisfied"] = False
-                print(f"Not all objects present in the scene - X\n")
+                logger.info(f"Not all objects present in the scene - X\n")
                 continue
             else:
                 evaluations[spec]["all_objects_present"] = True
                 filtered_specs.append(spec)
-                print(f"All objects present in the scene\n")
+                logger.info(f"All objects present in the scene\n")
         
-        print(f"\n{len(filtered_specs)} out of {len(self.obj_obj_relationship_specs)} object-object relationship specs have all objects present in the scene. Checking relationships...\n")
+        logger.info(f"\n{len(filtered_specs)} out of {len(self.obj_obj_relationship_specs)} object-object relationship specs have all objects present in the scene. Checking relationships...\n")
         
         # ==========================================================================================
         # Check if there are any specs left to evaluate after filtering
@@ -162,7 +168,7 @@ class ObjObjRelationshipMetric(BaseMetric):
                 message="No object-object relationship specs have all objects present in the scene.",
                 data=evaluations
             )
-            print(f"\n{result.message}\n")
+            logger.info(f"\n{result.message}\n")
             return result
         
         # ==========================================================================================
@@ -183,7 +189,7 @@ class ObjObjRelationshipMetric(BaseMetric):
         # Evaluate the relationships
         for spec, assessment in zip(filtered_specs, response.assessments):
             
-            print(f"Evaluating {spec} ...")
+            logger.info(f"Evaluating {spec} ...")
             
             # --------------------------------------------------------------------------------------
             # Gather the mapped relationship types for the spec
@@ -194,7 +200,7 @@ class ObjObjRelationshipMetric(BaseMetric):
                 warn(f"Could not find a suitable relationship type for {assessment.relationship}. Skipping...", RuntimeWarning)
                 continue
             evaluations[spec]["mapped_relationship_types"] = assessment.relationship_types
-            print(f"Relationship types: {assessment.relationship_types}")
+            logger.info(f"Relationship types: {assessment.relationship_types}")
 
             # --------------------------------------------------------------------------------------            
             # Find all suitable objects for the anchor and other objects based on the assessed categories
@@ -209,14 +215,14 @@ class ObjObjRelationshipMetric(BaseMetric):
             # For each object, create a bounding box for it
             bboxes = {}
             all_ids = list(chain(anchor_category_obj_ids, *other_categories_obj_ids.values()))
-            print(f"Creating bounding boxes for {len(all_ids)} objects...", end="")
+            logger.info(f"Creating bounding boxes for {len(all_ids)} objects...")
             for obj_id in all_ids:
                 obj_bbox_center = self.scene.get_obj_bbox_center(obj_id)
                 obj_half_size = self.scene.get_default_pose_obj_bbox_extents(obj_id) / 2
                 obj_coord_axes = self.scene.get_obj_matrix(obj_id).to_3x3()
                 obj_bbox = BoundingBox(obj_bbox_center, obj_half_size, obj_coord_axes, cfg=self.cfg.bounding_box)
                 bboxes[obj_id] = obj_bbox
-            print("Done.")
+            logger.info("Done creating bounding boxes.")
 
             # --------------------------------------------------------------------------------------
             # Create all possible object combination groups for the current spec
@@ -228,7 +234,7 @@ class ObjObjRelationshipMetric(BaseMetric):
             
             # Choices for the other objects are combinations of the objects in the corresponding categories based on the counts per category
             # E.g., if there are 4 objects for an other category and the count is 2, then there are 4C2 = 6 choices - [(0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)]
-            print(f"Creating object combination groups for {len(anchor_choices)} anchor objects and {len(other_categories_obj_ids)} other categories...")
+            logger.info(f"Creating object combination groups for {len(anchor_choices)} anchor objects and {len(other_categories_obj_ids)} other categories...")
             other_object_choices = {}
             for other_category, count in zip(other_categories_obj_ids.keys(), assessment.other_object_counts):
                 # N choose "count" combinations for each category
@@ -237,7 +243,7 @@ class ObjObjRelationshipMetric(BaseMetric):
             
             # Create all possible groups based on choosing one choice from each category
             candidate_groups = list(product(anchor_choices, *other_object_choices.values()))
-            print(f"Created {len(candidate_groups)} candidate groups.")
+            logger.info(f"Created {len(candidate_groups)} candidate groups.")
             
             # --------------------------------------------------------------------------------------
             # Evaluate the relationships for each group
@@ -270,7 +276,7 @@ class ObjObjRelationshipMetric(BaseMetric):
                     
                     # Get the relationship check function
                     relation_check_function = getattr(self.spatial_relation_evaluator, child_relationship_type)
-                    print("Using function:", relation_check_function.__name__)
+                    logger.info(f"Using function: {relation_check_function.__name__}")
 
                     # Prepare the parameters for the function
                     function_params = {
@@ -288,10 +294,11 @@ class ObjObjRelationshipMetric(BaseMetric):
                     satisfied = bool(relationship_score > self.cfg.relationship_satisfaction_threshold) # bool() to convert from numpy.bool_ for JSON serialization
                     child_relationships_results.append(satisfied)
                     
-                    print((f" --- Spec: {spec}, Candidate Group: {evaluations[spec]['num_candidate_groups']}, "
-                           f"Reference: {anchor_obj_id}, Target(s): {all_other_ids}, "
-                           f"Child Relationships: {assessment.relationship_types}, "
-                           f"Evaluating: {child_relationship_type}, Score: {relationship_score:.2f}"))
+                    logger.info(f" --- Spec: {spec}, Candidate Group: {evaluations[spec]['num_candidate_groups']}, "
+                               f"Reference: {anchor_obj_id}, Target(s): {all_other_ids}, "
+                               f"Child Relationships: {assessment.relationship_types}, "
+                               f"Evaluating: {child_relationship_type}, Score: {relationship_score:.4f}, "
+                               f"Threshold: {self.cfg.relationship_satisfaction_threshold}, Satisfied: {satisfied}")
                 
                 # --------------------------------------------------------------------------------------
                 # For this group, results for all child relationships are collected
@@ -300,7 +307,7 @@ class ObjObjRelationshipMetric(BaseMetric):
                 parent_relationship_satisfied = all(child_relationships_results)
                 parent_relationship_candidate_results.append(parent_relationship_satisfied)
                     
-                print(f"> Child relationship results: {child_relationships_results} -> Parent relationship satisfied: {parent_relationship_satisfied}\n")
+                logger.info(f"> Child relationship results: {child_relationships_results} -> Parent relationship satisfied: {parent_relationship_satisfied}\n")
                 
                 # --------------------------------------------------------------------------------------
                 # Render this group of objects for visualization
@@ -328,14 +335,14 @@ class ObjObjRelationshipMetric(BaseMetric):
                     satisfied = count_satisfied >= int(quantity)
             evaluations[spec]["satisfied"] = satisfied
             
-            print(f"Expected {quantifier} {quantity}, got {count_satisfied} - {'O' if satisfied else 'X'}\n")
+            logger.info(f"Expected {quantifier} {quantity}, got {count_satisfied} - {'O' if satisfied else 'X'}\n")
 
         result = MetricResult(
             message=f"{sum([1 for s in evaluations.values() if s['satisfied']])}/{len(evaluations)} requirements are satisfied.",
             data=evaluations
         )
 
-        print(f"\n{result.message}\n")
-        
+        logger.info(f"\n{result.message}\n")
+
         return result
     

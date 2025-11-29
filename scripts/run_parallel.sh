@@ -31,8 +31,10 @@ fi
 
 shift 2  # Remove first two args, rest are passed to main.py
 
-# Create logs directory
-mkdir -p logs
+# Create unique run ID and log directory
+RUN_ID="$(date +%Y%m%d_%H%M%S)_$$"
+LOG_DIR="logs/run_${RUN_ID}"
+mkdir -p "$LOG_DIR"
 
 # Calculate scenes per worker
 SCENES_PER_WORKER=$((TOTAL_SCENES / NUM_WORKERS))
@@ -41,6 +43,7 @@ PIDS=()
 echo "========================================"
 echo "Parallel Scene Evaluation"
 echo "========================================"
+echo "Run ID: $RUN_ID"
 echo "Total scenes: $TOTAL_SCENES"
 echo "Workers: $NUM_WORKERS"
 echo "Scenes per worker: ~$SCENES_PER_WORKER"
@@ -63,14 +66,14 @@ for ((i=0; i<NUM_WORKERS; i++)); do
         'evaluation_plan.input_cfg.scene_mode=range' \
         "evaluation_plan.input_cfg.scene_range=[$START,$END]" \
         "$@" \
-        > "logs/worker_${i}.log" 2>&1 &
+        > "${LOG_DIR}/worker_${i}.log" 2>&1 &
 
     PIDS+=($!)
 done
 
 echo ""
 echo "All workers launched. PIDs: ${PIDS[*]}"
-echo "Logs: logs/worker_*.log"
+echo "Logs: ${LOG_DIR}/worker_*.log"
 echo ""
 echo "Waiting for completion..."
 
@@ -93,9 +96,10 @@ echo ""
 echo "========================================"
 if [ $FAILED -eq 1 ]; then
     echo "SOME WORKERS FAILED: ${FAILED_WORKERS[*]}"
-    echo "Check logs/worker_*.log for details"
+    echo "Check ${LOG_DIR}/worker_*.log for details"
     exit 1
 else
     echo "ALL WORKERS COMPLETED SUCCESSFULLY"
 fi
+echo "Logs: ${LOG_DIR}/"
 echo "========================================"

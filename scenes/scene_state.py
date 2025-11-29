@@ -22,6 +22,7 @@ class SceneState:
         self.front: list[float] = None
         self.unit: float = None
         self.assetSource: str = None
+        self.objectFrontVector: list[float] = None
         self.architecture: Architecture = None
         self.objs: list[Obj] = None
 
@@ -68,6 +69,7 @@ class SceneState:
         self.front = scene_spec.get("front", [0, 1, 0])
         self.unit = scene_spec.get("unit", 1.0)
         self.assetSource = scene_spec.get("assetSource", None)
+        self.objectFrontVector = scene_spec.get("objectFrontVector", [0, -1, 0])
 
         # Load the architecture
         arch_spec: dict = scene_spec.get("arch", None)

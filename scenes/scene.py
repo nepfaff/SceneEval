@@ -149,6 +149,23 @@ class Scene:
         b_obj = self.b_objs[obj_id]
         b_obj.rotation_mode = "XYZ"
         return b_obj.rotation_euler.z
+
+    def get_front_vector(self) -> np.ndarray:
+        """
+        Get the front vector for objects in this scene.
+
+        The front vector defines the canonical front direction for objects in their
+        default pose. This may vary by scene generation method (e.g., SceneAgent uses
+        +Y as front, while LayoutVLM uses -Y).
+
+        Returns:
+            front_vector: the front direction vector [x, y, z]
+        """
+
+        scene_state = self.blender_scene.scene_state
+        if scene_state and scene_state.objectFrontVector:
+            return np.array(scene_state.objectFrontVector)
+        return np.array([0, -1, 0])  # Default: -Y is front
     
     def get_default_pose_t_obj(self, obj_id: str) -> trimesh.Trimesh:
         """

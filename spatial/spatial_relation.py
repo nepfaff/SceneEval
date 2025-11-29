@@ -1,7 +1,10 @@
+import logging
 import trimesh
 import numpy as np
 from .bounding_box import BoundingBox
 from .config import SpatialRelationConfig
+
+logger = logging.getLogger(__name__)
 
 SIDE_MAP = {
     "left": "-x",
@@ -13,17 +16,18 @@ SIDE_MAP = {
 }
 
 class SpatialRelationEvaluator:
-    
-    def __init__(self, cfg: SpatialRelationConfig) -> None:
+
+    def __init__(self, cfg: SpatialRelationConfig, front_vector: np.ndarray = None) -> None:
         """
         Initialize the spatial relation with the configuration.
 
         Args:
-            SpatialRelationConfig: the configuration for the spatial relations
+            cfg: the configuration for the spatial relations
+            front_vector: the front direction vector for objects (default: [0, -1, 0])
         """
-        
+
         self.cfg = cfg
-        self.front_vector = np.array([0, -1, 0])
+        self.front_vector = front_vector if front_vector is not None else np.array([0, -1, 0])
         self.up_vector = np.array([0, 0, 1])
     
     def inside_of(self, target_bbox: BoundingBox, reference_bbox: BoundingBox, **kwargs) -> float:
@@ -40,7 +44,11 @@ class SpatialRelationEvaluator:
         """
 
         score = target_bbox.overlaps(reference_bbox)
-                
+
+        logger.info(f"inside_of: target_centroid={target_bbox.centroid}, target_half_size={target_bbox.half_size}, "
+                   f"reference_centroid={reference_bbox.centroid}, reference_half_size={reference_bbox.half_size}, "
+                   f"overlap_score={score:.4f}")
+
         return score
 
     def outside_of(self, target_bbox: BoundingBox, reference_bbox: BoundingBox, **kwargs) -> float:
@@ -348,7 +356,12 @@ class SpatialRelationEvaluator:
             distance_score = (1 - distance_deviation_ratios[i]) ** 2 * self.cfg.surround.distance_weight
             angle_score = (1 - angle_deviation_ratios[i]) ** 2 * self.cfg.surround.angle_weight
             scores.append(portion * (distance_score + angle_score))
+            logger.info(f"surround: target[{i}] distance={distances[i]:.3f}, distance_dev_ratio={distance_deviation_ratios[i]:.3f}, "
+                       f"angle_dev_ratio={angle_deviation_ratios[i]:.3f}, distance_score={distance_score:.4f}, angle_score={angle_score:.4f}")
         score = np.sum(scores)
+
+        logger.info(f"surround: num_targets={num_ring_bboxes}, ideal_distance={ideal_distance:.3f}, "
+                   f"ideal_angle={np.degrees(ideal_angle):.1f}deg, distances={distances}, final_score={score:.4f}")
             
         return score
 

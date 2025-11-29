@@ -781,6 +781,7 @@ class BlenderScene:
         b_camera.data.type = self.blender_cfg.camera_type
         b_camera.data.lens_unit = self.blender_cfg.camera_lens_unit
         b_camera.data.lens = self.blender_cfg.camera_lens
+        b_camera.data.clip_start = 0.001  # 1mm near clip plane (default 0.1m clips small objects)
 
         return b_camera
     
@@ -1020,6 +1021,12 @@ class BlenderScene:
             b_camera.rotation_euler[0] = np.deg2rad(bird_view_degree)
         else:
             b_camera.rotation_euler[0] = np.deg2rad(self.blender_cfg.camera_bird_view_degree)
+
+        # Rotate camera based on object front vector convention.
+        # If front is +Y (e.g., SceneAgent), rotate camera 180° to look at the actual front.
+        if self.scene_state is not None and self.scene_state.objectFrontVector is not None:
+            if self.scene_state.objectFrontVector[1] > 0:  # Front is +Y
+                b_camera.rotation_euler[2] += np.pi
         
         # # Need this because models imported from .glb files can have multiple meshes within one root b_obj
         obj_bounds = np.asarray(self.get_obj_bounds(b_obj.name))

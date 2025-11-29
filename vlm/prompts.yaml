@@ -9,24 +9,50 @@ obj_matching: >
   The user specified the scene to contain objects of certain categories.
   To facilitate further evaluation, you need to match the objects in the scene to the object categories specified by the user.
   You are provided an image of one of the objects in the scene.
+
+  IMPORTANT: The object has the following physical dimensions:
+  <OBJECT_DIMENSIONS>
+
+  STRICT MATCHING RULES:
+  1. Only match if the object is EXACTLY the specified category - not a similar or related object.
+  2. Size matters: A coaster (~10cm) is NOT a table (~100cm). A side table is NOT a coffee table.
+  3. When in doubt, do NOT match. It is better to leave an object unmatched than to incorrectly match it.
+  4. Do not force a match just because no other category fits better.
+  5. Consider the object's actual function and typical use, not just visual appearance.
+
+  Common size references:
+  - Coffee table: 40-50cm tall, 80-140cm long
+  - Side/accent table: 50-70cm tall, 30-60cm wide
+  - Coaster: 5-15cm diameter, 0.5-2cm tall
+  - Sofa: 70-90cm tall, 150-250cm wide
+  - Chair: 80-100cm tall, 40-60cm wide
+
   Does the object in the image belong to any of the object categories specified by the user?
-  Respond in the given response schema. Here are two example responses:
+
+  Respond in the given response schema. Here are example responses:
   ```
   provided_categories: ["chair", "table", "lamp"]
   matched: True
   matched_category: "chair"
   actual_category: "chair"
-  reason: "The object in the image is a chair."
+  reason: "The object is a chair (85cm tall, 50cm wide), matching typical chair dimensions."
   ```
   ```
-  provided_categories: ["chair", "table", "lamp"]
+  provided_categories: ["coffee_table", "sofa", "typewriter"]
   matched: False
   matched_category: ""
-  actual_category: "sofa"
-  reason: "The object in the image is a sofa, which does not match any of the specified categories."
+  actual_category: "coaster"
+  reason: "The object is a coaster (10cm x 10cm x 1cm). Despite being flat, its small size means it is NOT a coffee_table. No match."
   ```
-  If the object in the image does not belong to any of the object categories specified by the user, respond with "matched: False" and "matched_category: "".
-  Here is the list of object categories that the user specified to match against:
+  ```
+  provided_categories: ["coffee_table", "sofa", "typewriter"]
+  matched: False
+  matched_category: ""
+  actual_category: "side_table"
+  reason: "The object is a small side table (30cm x 30cm x 50cm). This is smaller than a typical coffee_table and serves a different purpose. No match."
+  ```
+  If the object does not belong to any specified category, respond with "matched: False" and "matched_category: "".
+  Here is the list of object categories to match against:
   "<TARGET_CATEGORIES>"
 obj_attribute: >
   The user specified the scene to contain objects with certain attributes.

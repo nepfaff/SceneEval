@@ -85,11 +85,6 @@ class ObjMatching(BaseMetric):
             result: the result of running the metric
         """
         
-        # Prepare prompt info
-        prompt_info = {
-            "target_categories": str(self.target_categories)
-        }
-        
         # Try to match each object to the target categories
         matching_result = ObjMatchingResults(
             per_category={category: {} for category in self.target_categories},
@@ -97,15 +92,25 @@ class ObjMatching(BaseMetric):
             actual_categories={}
         )
         for i, obj_id in enumerate(self.obj_ids):
-            
+
             print(f"Matching object {i+1}/{len(self.obj_ids)} ...")
-            
+
             # Start with a clean VLM state
             self.vlm.reset()
-            
+
+            # Get object dimensions (XYZ extents in meters)
+            obj_extents = self.scene.get_default_pose_obj_bbox_extents(obj_id)
+            dimensions_str = f"Width: {obj_extents[0]*100:.1f}cm, Depth: {obj_extents[1]*100:.1f}cm, Height: {obj_extents[2]*100:.1f}cm"
+
+            # Prepare prompt info with dimensions
+            prompt_info = {
+                "target_categories": str(self.target_categories),
+                "object_dimensions": dimensions_str
+            }
+
             # Get the front image of the object
             image_path = self.scene.get_obj_render_path(obj_id, "FRONT")
-            
+
             response: MathcingAssessmentResponseFormat | str = self.vlm.send("obj_matching",
                                                                              prompt_info=prompt_info,
                                                                              image_paths=[image_path],

@@ -211,16 +211,21 @@ class AccessibilityMetric(BaseMetric):
         # Initialize the accessibility map with the floor mask
         accessibility_map = floor_mask.copy()
 
+        # Get the front vector for this scene (may differ by generation method)
+        front_vector = self.scene.get_front_vector()
+
         # Compute the access area direction, distance, and extents based on the side
         match side:
             case "front":
-                access_area_direction = np.array([0, -1, 0])
+                access_area_direction = front_vector.copy()
             case "back":
-                access_area_direction = np.array([0, 1, 0])
+                access_area_direction = -front_vector.copy()
             case "left":
-                access_area_direction = np.array([-1, 0, 0])
+                # Rotate front 90° CCW around Z: (x,y) -> (-y, x)
+                access_area_direction = np.array([-front_vector[1], front_vector[0], 0])
             case "right":
-                access_area_direction = np.array([1, 0, 0])
+                # Rotate front 90° CW around Z: (x,y) -> (y, -x)
+                access_area_direction = np.array([front_vector[1], -front_vector[0], 0])
         
         obj_default_pose_bbox_extents = self.scene.get_default_pose_obj_bbox_extents(obj_id)
         match side:

@@ -187,9 +187,9 @@ class SupportMetric(BaseMetric):
                 case "ceiling":
                     gravity_direction = np.array([0, 0, 1])
                 case "wall":
-                    FRONT_VECTOR = np.array([0, -1, 0])
+                    front_vector = self.scene.get_front_vector()
                     obj_matrix = self.scene.get_obj_matrix(obj_id)
-                    obj_front_vector = np.asarray(obj_matrix)[:3, :3] @ FRONT_VECTOR
+                    obj_front_vector = np.asarray(obj_matrix)[:3, :3] @ front_vector
                     gravity_direction = -obj_front_vector # For wall objects, the gravity direction is the back of the object
                 case _:
                     warn(f"Unknown support type '{support_type}' for object {obj_id}. Defaulting to ground support.", RuntimeWarning)

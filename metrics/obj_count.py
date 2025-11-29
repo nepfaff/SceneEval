@@ -37,7 +37,7 @@ class ObjCountMetric(BaseMetric):
         evaluations = {}
         for i, spec in enumerate(self.obj_count_specs):
             quantifier, quantity, category = spec.split(",")
-            count_in_scene = len(self.matching_result.per_category[category])
+            count_in_scene = len(self.matching_result.per_category.get(category, []))
 
             print(f"[{i+1}/{len(self.obj_count_specs)}] Checking number of {category} in the scene: {count_in_scene} {quantifier} {quantity} - ", end="")
             

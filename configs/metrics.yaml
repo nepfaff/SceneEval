@@ -147,6 +147,7 @@ metrics: # Use metric class names as keys (i.e., CamelCase)
     displacement_threshold: 0.01
     rotation_threshold: 0.1
     hydroelastic_modulus: null  # point contact (hydroelastic causes runtime errors with convex meshes)
+    save_simulation_html: true
 
   # Static equilibrium metrics (VHACD variant)
   StaticEquilibriumMetricVHACD:
@@ -157,6 +158,7 @@ metrics: # Use metric class names as keys (i.e., CamelCase)
     displacement_threshold: 0.01
     rotation_threshold: 0.1
     hydroelastic_modulus: null  # point contact (hydroelastic causes runtime errors with convex meshes)
+    save_simulation_html: true
 
   # Welded equilibrium metrics (CoACD variant)
   WeldedEquilibriumMetricCoACD:
@@ -169,6 +171,7 @@ metrics: # Use metric class names as keys (i.e., CamelCase)
     rotation_threshold: 0.1
     penetration_threshold: 0.001
     hydroelastic_modulus: null  # point contact (hydroelastic causes runtime errors with convex meshes)
+    save_simulation_html: true
 
   # Welded equilibrium metrics (VHACD variant)
   WeldedEquilibriumMetricVHACD:
@@ -180,6 +183,7 @@ metrics: # Use metric class names as keys (i.e., CamelCase)
     rotation_threshold: 0.1
     penetration_threshold: 0.001
     hydroelastic_modulus: null  # point contact (hydroelastic causes runtime errors with convex meshes)
+    save_simulation_html: true
 
   # Architectural welded equilibrium metrics (CoACD variant)
   # Welds floor, wall, ceiling objects - only "object" type objects move freely
@@ -190,6 +194,7 @@ metrics: # Use metric class names as keys (i.e., CamelCase)
     displacement_threshold: 0.01
     rotation_threshold: 0.1
     hydroelastic_modulus: null  # point contact (hydroelastic causes runtime errors with convex meshes)
+    save_simulation_html: true
 
   # Architectural welded equilibrium metrics (VHACD variant)
   # Welds floor, wall, ceiling objects - only "object" type objects move freely
@@ -199,6 +204,7 @@ metrics: # Use metric class names as keys (i.e., CamelCase)
     displacement_threshold: 0.01
     rotation_threshold: 0.1
     hydroelastic_modulus: null  # point contact (hydroelastic causes runtime errors with convex meshes)
+    save_simulation_html: true
 
   # SceneAgent Drake metrics - use pre-computed SDFs with CoACD collision geometry
   # and full inertia tensors from scene-agent
@@ -211,7 +217,7 @@ metrics: # Use metric class names as keys (i.e., CamelCase)
     displacement_threshold: 0.01
     rotation_threshold: 0.1
     weld_wall_ceiling_objects: true
-    save_simulation_html: false
+    save_simulation_html: true
 
   WeldedEquilibriumMetricSceneAgent:
     simulation_time: 5.0
@@ -220,4 +226,4 @@ metrics: # Use metric class names as keys (i.e., CamelCase)
     rotation_threshold: 0.1
     penetration_threshold: 0.001
     weld_wall_ceiling_objects: true
-    save_simulation_html: false
+    save_simulation_html: true

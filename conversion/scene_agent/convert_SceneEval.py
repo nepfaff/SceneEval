@@ -6,6 +6,12 @@ Usage:
         ~/scene-agent/outputs/2025-11-27/21-25-16 \
         input/SceneAgent
 
+With custom ID mapping:
+    python conversion/scene_agent/convert_SceneEval.py \
+        ~/scene-agent/outputs/2025-11-28/23-50-40 \
+        input/SceneAgent \
+        --mapping '{"0": 106, "1": 56, "2": 39, "3": 74, "4": 94}'
+
 This copies scene-agent output to SceneEval input format:
     - scene_states/final_scene/sceneeval_state.json -> scene_X.json
     - generated_assets/ -> scene_X/assets/
@@ -69,6 +75,10 @@ def convert_single_scene(scene_dir: Path, target_dir: Path, scene_id: int) -> No
         if old_sdf_path.startswith("generated_assets/"):
             obj["sdfPath"] = old_sdf_path[len("generated_assets/"):]
 
+    # Set objectFrontVector for SceneAgent scenes
+    # SceneAgent uses +Y as front due to GLTF coordinate transform
+    scene_data["scene"]["objectFrontVector"] = [0, 1, 0]
+
     with open(output_json_path, "w") as f:
         json.dump(scene_data, f, indent=2)
 
@@ -100,7 +110,7 @@ def convert_single_scene(scene_dir: Path, target_dir: Path, scene_id: int) -> No
     print(f"  Done: scene_{scene_id}")
 
 
-def convert_scene_agent_run(source_run_dir: Path, target_dir: Path) -> None:
+def convert_scene_agent_run(source_run_dir: Path, target_dir: Path, mapping: dict = None) -> None:
     """
     Convert all scenes from a scene-agent run to SceneEval format.
 
@@ -108,6 +118,8 @@ def convert_scene_agent_run(source_run_dir: Path, target_dir: Path) -> None:
         source_run_dir: Path to scene-agent run directory
             (e.g., ~/scene-agent/outputs/2025-11-27/21-25-16/)
         target_dir: Path to SceneEval input directory (e.g., input/SceneAgent/)
+        mapping: Optional dict mapping source index to target scene ID
+            (e.g., {"0": 106, "1": 56} maps scene_000 -> scene_106)
     """
     source_run_dir = Path(source_run_dir).expanduser().resolve()
     target_dir = Path(target_dir).expanduser().resolve()
@@ -129,11 +141,18 @@ def convert_scene_agent_run(source_run_dir: Path, target_dir: Path) -> None:
     print(f"Found {len(scene_dirs)} scenes to convert")
     print(f"Source: {source_run_dir}")
     print(f"Target: {target_dir}")
+    if mapping:
+        print(f"Mapping: {mapping}")
     print()
 
     for idx, scene_dir in enumerate(scene_dirs):
-        print(f"Converting {scene_dir.name} (scene_id={idx})...")
-        convert_single_scene(scene_dir, target_dir, idx)
+        # Use mapping if provided, otherwise use sequential index
+        if mapping and str(idx) in mapping:
+            scene_id = mapping[str(idx)]
+        else:
+            scene_id = idx
+        print(f"Converting {scene_dir.name} -> scene_{scene_id}...")
+        convert_single_scene(scene_dir, target_dir, scene_id)
         print()
 
     print(f"Conversion complete! {len(scene_dirs)} scenes saved to {target_dir}")
@@ -153,9 +172,19 @@ def main():
         type=Path,
         help="Path to SceneEval input directory (e.g., input/SceneAgent)"
     )
+    parser.add_argument(
+        "--mapping",
+        type=str,
+        default=None,
+        help='JSON mapping from source index to target ID, e.g., \'{"0": 106, "1": 56}\''
+    )
     args = parser.parse_args()
 
-    convert_scene_agent_run(args.source_run_dir, args.target_dir)
+    mapping = None
+    if args.mapping:
+        mapping = json.loads(args.mapping)
+
+    convert_scene_agent_run(args.source_run_dir, args.target_dir, mapping)
 
 
 if __name__ == "__main__":

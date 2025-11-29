@@ -128,6 +128,35 @@ _data
 </details>
 
 
+## Object Matching Behavior
+
+VLM-based metrics require matching scene objects to expected categories from the annotation. The `ObjMatching` metric uses GPT-4o to classify each object.
+
+### How It Works
+
+1. Target categories are extracted from the annotation's `ObjCount` field (e.g., `"eq,1,sofa; eq,1,coffee_table"` → `["sofa", "coffee_table"]`)
+2. Each object is rendered from the front view
+3. GPT-4o is asked to match the object to one of the target categories
+4. **Object dimensions are provided** to help distinguish between similar objects (e.g., coaster vs coffee table)
+
+### Matching Rules
+
+The matching uses **strict rules** to avoid false matches:
+- Only exact category matches are accepted (a side table is NOT a coffee table)
+- Size is considered: a 10cm coaster cannot match a 100cm coffee table
+- When uncertain, objects are left unmatched rather than incorrectly categorized
+
+### Reporting Metrics
+
+When reporting VLM-based metrics, be aware:
+- `obj_matching_result.json` shows `per_category` (matched) and `not_matched_objs` (rejected)
+- Scene generation methods may create objects not in the expected categories
+- Match rate depends on both generation quality AND annotation specificity
+
+**Example**: If annotation expects `coffee_table` but generation creates `side_table` + `coaster`, neither will match despite being table-like objects.
+
+
+
 ## Quick Start Demo
 
 Try SceneEval with our provided example scenes. You do *not* need an OpenAI API key for this demo.
@@ -279,6 +308,9 @@ python main.py \
 ```
 
 Results will be saved to `./output_eval/LayoutVLM/`.
+
+Note that SceneAgent needs to use `sceneagent_plan.yaml` for its
+specific Drake metrics.
 
 
 ## SceneAgent Support
