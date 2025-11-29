@@ -89,6 +89,14 @@ def convert_single_scene(scene_dir: Path, target_dir: Path, scene_id: int) -> No
         print(f"  Copying {floor_plan_path.name} -> scene_{scene_id}/floor_plan.sdf")
         shutil.copy2(floor_plan_path, output_floor_plan)
 
+    # Copy original scene.blend for high-quality rendering
+    # (Similar to SceneWeaver's original_sceneweaver.blend)
+    scene_blend_path = scene_dir / "scene_states" / "final_scene" / "scene.blend"
+    if scene_blend_path.exists():
+        output_blend = assets_output_dir / "original_scene_agent.blend"
+        print(f"  Copying scene.blend -> assets/original_scene_agent.blend")
+        shutil.copy2(scene_blend_path, output_blend)
+
     print(f"  Done: scene_{scene_id}")
 
 

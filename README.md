@@ -272,8 +272,9 @@ python main.py \
     'evaluation_plan.input_cfg.scene_mode=range' \
     'evaluation_plan.input_cfg.scene_range=[0,5]'
 
-# Or evaluate specific scene IDs (e.g., from SceneEval-500)
+# Or evaluate specific scene IDs (e.g., from SceneEval-500), 3 workers
 ./scripts/run_parallel_list.sh "39,56,74,94,106" 3 \
+    'evaluation_plan=eval_plan' \
     'evaluation_plan.input_cfg.scene_methods=[LayoutVLM]'
 ```
 

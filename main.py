@@ -242,6 +242,135 @@ def _copy_and_render_original_sceneweaver_blend(scene: Scene, method_scene_file:
     else:
         bpy.ops.wm.read_homefile()
 
+
+def _copy_and_render_original_scene_agent_blend(scene: Scene, method_scene_file: pathlib.Path, output_dir: pathlib.Path) -> None:
+    """
+    Copy the original Scene Agent blend file to output and render from it.
+
+    Scene Agent generates high-quality .blend files with proper materials.
+    Similar to SceneWeaver handling.
+
+    Args:
+        scene: The scene object (used for render settings)
+        method_scene_file: Path to the scene JSON file
+        output_dir: Output directory for this scene
+    """
+    import bpy
+    import math
+
+    # Find the original blend file in the input assets directory
+    scene_dir = method_scene_file.parent / method_scene_file.stem / "assets"
+    original_blend = scene_dir / "original_scene_agent.blend"
+
+    if not original_blend.exists():
+        print(f"  Original Scene Agent blend not found at: {original_blend}")
+        return
+
+    # Copy to output directory
+    output_blend = output_dir / "original_scene_agent.blend"
+    shutil.copy2(original_blend, output_blend)
+    print(f"  Copied original Scene Agent blend to: {output_blend}")
+
+    # Render from original blend file
+    print(f"  Rendering from original Scene Agent blend...")
+
+    # Save current Blender state
+    current_blend = bpy.data.filepath
+
+    # Open the original blend file
+    bpy.ops.wm.open_mainfile(filepath=str(original_blend))
+
+    # Set up render settings
+    bpy.context.scene.render.engine = 'CYCLES'
+    bpy.context.scene.cycles.device = 'CPU'
+    bpy.context.scene.cycles.samples = 128
+    bpy.context.scene.render.resolution_x = 512
+    bpy.context.scene.render.resolution_y = 512
+    bpy.context.scene.render.film_transparent = False
+
+    # Find scene bounds from all mesh objects
+    import mathutils as mu
+    min_x, max_x = float('inf'), float('-inf')
+    min_y, max_y = float('inf'), float('-inf')
+    min_z, max_z = float('inf'), float('-inf')
+
+    for obj in bpy.data.objects:
+        if obj.type == 'MESH' and obj.visible_get():
+            # Skip architecture (floor, walls)
+            if 'floor' in obj.name.lower() or 'wall' in obj.name.lower():
+                continue
+            for v in obj.bound_box:
+                world_v = obj.matrix_world @ mu.Vector(v)
+                min_x = min(min_x, world_v.x)
+                max_x = max(max_x, world_v.x)
+                min_y = min(min_y, world_v.y)
+                max_y = max(max_y, world_v.y)
+                min_z = min(min_z, world_v.z)
+                max_z = max(max_z, world_v.z)
+
+    # Handle empty scene case
+    if min_x == float('inf'):
+        min_x, max_x = -3, 3
+        min_y, max_y = -3, 3
+        min_z, max_z = 0, 2
+
+    center_x = (min_x + max_x) / 2
+    center_y = (min_y + max_y) / 2
+    scene_size = max(max_x - min_x, max_y - min_y)
+
+    # Create a new top-down camera
+    cam_data = bpy.data.cameras.new("TopDownCamera")
+    cam = bpy.data.objects.new("TopDownCamera", cam_data)
+    bpy.context.scene.collection.objects.link(cam)
+
+    # Position camera above scene center looking down
+    cam_height = max_z + scene_size * 1.5
+    cam.location = (center_x, center_y, cam_height)
+    cam.rotation_euler = (0, 0, 0)  # Looking straight down
+    cam.data.type = 'ORTHO'
+    cam.data.ortho_scale = scene_size * 1.3
+    bpy.context.scene.camera = cam
+
+    # Add balanced lighting for good color reproduction
+    # 1. Sun light from above and slightly angled
+    sun_data = bpy.data.lights.new("RenderSun", 'SUN')
+    sun_data.energy = 2.0
+    sun = bpy.data.objects.new("RenderSun", sun_data)
+    bpy.context.scene.collection.objects.link(sun)
+    sun.location = (center_x, center_y, cam_height + 5)
+    sun.rotation_euler = (math.radians(45), math.radians(20), 0)
+
+    # 2. Area light for soft fill
+    area_data = bpy.data.lights.new("RenderArea", 'AREA')
+    area_data.energy = 200.0
+    area_data.size = scene_size
+    area = bpy.data.objects.new("RenderArea", area_data)
+    bpy.context.scene.collection.objects.link(area)
+    area.location = (center_x, center_y, cam_height - 1)
+    area.rotation_euler = (math.radians(180), 0, 0)  # Pointing down
+
+    # Set up world background with ambient light
+    if bpy.context.scene.world is None:
+        bpy.context.scene.world = bpy.data.worlds.new("World")
+    bpy.context.scene.world.use_nodes = True
+    bg_node = bpy.context.scene.world.node_tree.nodes.get("Background")
+    if bg_node:
+        bg_node.inputs['Color'].default_value = (0.9, 0.9, 0.9, 1.0)
+        bg_node.inputs['Strength'].default_value = 0.3
+
+    # Render
+    output_image = output_dir / "original_scene_agent_render.png"
+    bpy.context.scene.render.filepath = str(output_image)
+    bpy.ops.render.render(write_still=True)
+    print(f"  Saved original Scene Agent render to: {output_image}")
+
+    # Reload the previous blend file
+    if current_blend:
+        bpy.ops.wm.open_mainfile(filepath=current_blend)
+    else:
+        bpy.ops.wm.read_homefile()
+
+
 def _get_obj_matching(scene: Scene,
                       annotation: Annotation,
                       vlm: BaseVLM,
@@ -409,6 +538,12 @@ def main(cfg: DictConfig) -> None:
                     _copy_and_render_original_sceneweaver_blend(scene, method_scene_file, output_dir)
                     # Recreate scene after rendering original blend - the bpy.ops.wm.open_mainfile()
                     # call invalidates all Blender object references in the Scene object
+                    scene = Scene(mesh_retriever, scene_state, scene_cfg, blender_cfg, trimesh_cfg, output_dir)
+
+                # For SceneAgent: Copy and render original blend file for comparison
+                if method == "SceneAgent":
+                    _copy_and_render_original_scene_agent_blend(scene, method_scene_file, output_dir)
+                    # Recreate scene after rendering original blend
                     scene = Scene(mesh_retriever, scene_state, scene_cfg, blender_cfg, trimesh_cfg, output_dir)
 
                 # If no_eval and not semantic_render, can skip the rest

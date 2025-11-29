@@ -384,9 +384,9 @@ class BlenderScene:
         b_new_obj.matrix_world = scene_transform @ b_new_obj.matrix_world
         self.update()
         
-        # NOTE: This fixes the orientation for some asset types but NOT for SceneWeaver
-        # SceneWeaver exports are already correctly oriented (Z-up via glTF Y-up conversion)
-        if not obj.model_id.startswith("sceneweaver"):
+        # NOTE: This fixes the orientation for some asset types but NOT for SceneWeaver or Scene Agent
+        # SceneWeaver and Scene Agent exports are already correctly oriented (Z-up via glTF Y-up conversion)
+        if not obj.model_id.startswith("sceneweaver") and not obj.model_id.startswith("scene-agent"):
             neg_90_x = Matrix.Rotation(-np.pi / 2, 4, "X")
             b_new_obj.matrix_world = b_new_obj.matrix_world @ neg_90_x
         self.update()
