@@ -190,12 +190,20 @@ def get_arch_info(holodeck_scene: dict) -> list:
     return arch_info
 
 
-def get_object_info_from_unity(unity_objects: list) -> list:
+def get_object_info_from_unity(unity_objects: list, holodeck_scene: dict) -> list:
     """
     Extract object info from Unity metadata and convert to SceneEval format.
 
+    Uses ai2thor metadata for transforms. The key insight is:
+    - ai2thor's 'position' is the pivot/origin of the object (after physics placement)
+    - SceneEval applies the transform matrix to the object's pivot point
+    - Therefore we use ai2thor's 'position' (pivot) directly
+
+    This matches the C# PythonUnityBridge.cs which reads child.position (the pivot).
+
     Args:
         unity_objects: List of object metadata from ai2thor
+        holodeck_scene: Original Holodeck scene dict (for reference)
     """
     object_info = []
     idx = 0
@@ -217,6 +225,7 @@ def get_object_info_from_unity(unity_objects: list) -> list:
         if len(asset_id) < 32:
             continue
 
+        # Use ai2thor position (pivot point) - this is what the C# script uses
         position = unity_obj.get("position", {"x": 0, "y": 0, "z": 0})
         rotation = unity_obj.get("rotation", {"x": 0, "y": 0, "z": 0})
 
@@ -262,15 +271,16 @@ def convert_scene(controller: Controller, scene_json_path: Path, output_path: Pa
         print(f"  ERROR: Failed to load scene: {event.metadata.get('errorMessage', 'Unknown error')}")
         return False
 
-    # Get object metadata from Unity
+    # Get object count from Unity for verification
     unity_objects = event.metadata.get("objects", [])
     print(f"  Unity loaded {len(unity_objects)} objects")
 
     # Extract architecture info (from original JSON)
     arch_info = get_arch_info(holodeck_scene)
 
-    # Extract object info (from Unity metadata)
-    object_info = get_object_info_from_unity(unity_objects)
+    # Extract object info from ai2thor metadata
+    # ai2thor provides the actual Unity transform positions after physics placement
+    object_info = get_object_info_from_unity(unity_objects, holodeck_scene)
 
     print(f"  Architecture elements: {len(arch_info)}")
     print(f"  Converted objects: {len(object_info)}")

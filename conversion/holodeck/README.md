@@ -12,17 +12,16 @@ git clone https://github.com/allenai/Holodeck
 ```
 
 ### 2. Follow Holodeck's Setup Instructions
-Follow the `README.md` in the Holodeck repository to set up the environment and download the necessary assets.
+Follow the `README.md` in the Holodeck repository to set up the environment and install dependencies.
 
 Specifically, follow these sections in their `README.md`:
 - [Installation](https://github.com/allenai/Holodeck?tab=readme-ov-file#installation) - Set up the Python environment and install dependencies.
 - [Data](https://github.com/allenai/Holodeck?tab=readme-ov-file#data) - Download the necessary 3D assets for Holodeck.
-- [Load the scene in Unity](https://github.com/allenai/Holodeck?tab=readme-ov-file#load-the-scene-in-unity) - Set up Unity (step 1 to 3). The AI2-THOR repo should be at the root of the Holodeck directory.
 
 ### 3. Generate Scenes with Holodeck
 Follow the instructions in the Holodeck `README.md` to generate scenes.
 
-By default, generated scenes are saved in the `Holodeck/data/scenes/` directory. The following instructions assume this default path.
+By default, generated scenes are saved in the `Holodeck/data/scenes/` directory.
 
 #### **NOTE**
 Holodeck retrieves assets from two sources: `objathor`, which you downloaded in step 2, and the `AI2-THOR` asset set, which is bundled with the `AI2-THOR` Unity environment.
@@ -38,38 +37,129 @@ You have two options to handle this:
 
 We recommend **option 2** to ensure complete scenes.
 
+---
 
+## Conversion Methods
 
-## Setup Conversion Script
-### 1. Place the Unity Script
-Holodeck's output JSON files must be processed in AI2-THOR to get the final object transforms. Our conversion process uses a Unity script to automate this step.
+There are two methods to convert Holodeck scenes:
 
-Copy `PythonUnityBridge.cs` from this directory to AI2-THOR's `Assets/Editor/` folder.
+| Method | Requirements | Recommended |
+|--------|-------------|-------------|
+| **CloudRendering (Headless)** | Holodeck environment only | ✅ Yes |
+| **Unity Editor** | Unity 2020.3 installation | No |
+
+We recommend the **CloudRendering method** as it runs headlessly and doesn't require a Unity installation.
+
+---
+
+## Method 1: CloudRendering Conversion (Recommended)
+
+This method uses ai2thor's CloudRendering platform to load scenes headlessly and extract object transforms.
+
+### Running the Conversion
+
+From the **Holodeck** directory (with its virtual environment activated):
+
+```bash
+cd /path/to/Holodeck
+source .venv/bin/activate
+
+python /path/to/SceneEval/conversion/holodeck/convert_SceneEval_unity.py \
+    --input_dir /path/to/Holodeck/data/scenes \
+    --output_dir /path/to/SceneEval/input/Holodeck
+```
+
+### Options
+
+| Option | Description |
+|--------|-------------|
+| `--input_dir` | Directory containing Holodeck scene folders |
+| `--output_dir` | Output directory for converted SceneEval JSON files |
+| `--mapping` | Optional JSON mapping of source scene index to output scene ID |
+
+### Example with Scene ID Mapping
+
+If you want to assign specific scene IDs to your converted scenes:
+
+```bash
+python /path/to/SceneEval/conversion/holodeck/convert_SceneEval_unity.py \
+    --input_dir /path/to/Holodeck/data/scenes_batch \
+    --output_dir /path/to/SceneEval/input/Holodeck \
+    --mapping '{"0": 106, "1": 56, "2": 39, "3": 74, "4": 94}'
+```
+
+This maps:
+- `scene_000` → `scene_106.json`
+- `scene_001` → `scene_56.json`
+- etc.
+
+### How It Works
+
+The script:
+1. Creates an ai2thor controller with CloudRendering (headless)
+2. Loads each Holodeck scene JSON into the Unity engine via `CreateHouse`
+3. Extracts object transforms from ai2thor metadata (pivot positions after physics placement)
+4. Converts coordinates from Unity (Y-up) to SceneEval (Z-up)
+5. Saves the converted scene state JSON files
+
+---
+
+## Method 2: Unity Editor Conversion (Alternative)
+
+This method requires a Unity installation and runs conversion through the Unity Editor.
+
+### Setup
+
+#### 1. Set Up Unity
+Follow step 3 (Load the scene in Unity) from Holodeck's README:
+- [Load the scene in Unity](https://github.com/allenai/Holodeck?tab=readme-ov-file#load-the-scene-in-unity) - Set up Unity (step 1 to 3).
+
+#### 2. Place the Unity Script
+Copy `PythonUnityBridge.cs` to AI2-THOR's `Assets/Editor/` folder:
 ```bash
 cp ./PythonUnityBridge.cs <YOUR_PATH>/Holodeck/ai2thor/unity/Assets/Editor/PythonUnityBridge.cs
 ```
 
-### 2. Place the Conversion Script
-Copy `convert_SceneEval.py` from this directory into the root of the Holodeck repository.
+#### 3. Place the Conversion Script
+Copy `convert_SceneEval.py` to the root of the Holodeck repository:
 ```bash
 cp ./convert_SceneEval.py <YOUR_PATH>/Holodeck/convert_SceneEval.py
 ```
-This script controls Unity to get the final object transforms and converts Holodeck scenes into the scene state format SceneEval uses.
 
+### Running the Conversion
 
-## Running the Conversion
-
-### 1. Start Unity
-Open the AI2-THOR project in Unity before running the conversion script.
+#### 1. Start Unity
 - Add the AI2-THOR project from `Holodeck/ai2thor/unity/` to your Unity Hub.
 - Open the project in the Unity Editor.
 
-### 2. Open the `Procedure.unity` Scene
-In the Unity Editor, open the `Procedure.unity` scene located in `ai2thor/unity/Assets/Scenes/Procedural/Procedural.unity`.
+#### 2. Open the `Procedural.unity` Scene
+In the Unity Editor, open the scene at `ai2thor/unity/Assets/Scenes/Procedural/Procedural.unity`.
 
-### 3. Run the Conversion Script
-With Unity running and the `Procedure.unity` scene open, execute the conversion script from the root of the Holodeck repository:
+#### 3. Run the Conversion Script
+With Unity running and the `Procedural.unity` scene open:
 ```bash
 python convert_SceneEval.py
 ```
-By default, this script reads scenes from `Holodeck/data/scenes/` and saves the converted scenes to `Holodeck/data/converted_scenes/`.
+
+By default, this reads scenes from `Holodeck/data/scenes/` and saves converted scenes to `Holodeck/data/converted_scenes/`.
+
+---
+
+## Output Format
+
+The conversion produces SceneEval scene state JSON files with:
+- **Architecture**: Floors, walls, doors, and windows extracted from Holodeck's room definitions
+- **Objects**: Objaverse assets with transforms converted to SceneEval's coordinate system
+
+### Coordinate System Conversion
+
+| Axis | Unity | SceneEval |
+|------|-------|-----------|
+| Right | +X | +X |
+| Up | +Y | +Z |
+| Forward | +Z | +Y |
+
+The conversion applies the transform:
+- Position: `(x, y, z)` → `(x, z, y)`
+- Rotation: `Euler(90, 0, 0) * Euler(x, -(y-180), -z)`
+- Scale: `(x, y, z)` → `(x, z, y)`
