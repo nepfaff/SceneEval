@@ -34,6 +34,12 @@ from .architectural_welded_equilibrium import (
     ArchitecturalWeldedEquilibriumMetricVHACD,
     ArchitecturalWeldedEquilibriumMetricConfigVHACD,
 )
+from .combined_welded_equilibrium import (
+    CombinedWeldedEquilibriumMetricCoACD,
+    CombinedWeldedEquilibriumMetricConfigCoACD,
+    CombinedWeldedEquilibriumMetricVHACD,
+    CombinedWeldedEquilibriumMetricConfigVHACD,
+)
 from .drake_scene_agent import (
     DrakeCollisionMetricSceneAgent,
     DrakeCollisionMetricSceneAgentConfig,
@@ -88,6 +94,11 @@ __all__ = [
     "ArchitecturalWeldedEquilibriumMetricConfigCoACD",
     "ArchitecturalWeldedEquilibriumMetricVHACD",
     "ArchitecturalWeldedEquilibriumMetricConfigVHACD",
+    # Combined welded equilibrium metrics (CoACD and VHACD variants)
+    "CombinedWeldedEquilibriumMetricCoACD",
+    "CombinedWeldedEquilibriumMetricConfigCoACD",
+    "CombinedWeldedEquilibriumMetricVHACD",
+    "CombinedWeldedEquilibriumMetricConfigVHACD",
     # SceneAgent Drake metrics (use pre-computed SDFs with CoACD)
     "DrakeCollisionMetricSceneAgent",
     "DrakeCollisionMetricSceneAgentConfig",
