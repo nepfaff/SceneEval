@@ -206,6 +206,33 @@ metrics: # Use metric class names as keys (i.e., CamelCase)
     hydroelastic_modulus: null  # point contact (hydroelastic causes runtime errors with convex meshes)
     save_simulation_html: true
 
+  # Combined welded equilibrium metrics (CoACD variant)
+  # Welds BOTH: architectural objects (floor, wall, ceiling supported) AND penetrating objects
+  CombinedWeldedEquilibriumMetricCoACD:
+    simulation_time: 5.0
+    time_step: 1.0e-3
+    use_trimesh_inertia: false
+    density: 1000.0
+    coacd_threshold: 0.05
+    displacement_threshold: 0.01
+    rotation_threshold: 0.1
+    penetration_threshold: 0.001
+    hydroelastic_modulus: null  # point contact (hydroelastic causes runtime errors with convex meshes)
+    save_simulation_html: true
+
+  # Combined welded equilibrium metrics (VHACD variant)
+  # Welds BOTH: architectural objects (floor, wall, ceiling supported) AND penetrating objects
+  CombinedWeldedEquilibriumMetricVHACD:
+    simulation_time: 5.0
+    time_step: 1.0e-3
+    use_trimesh_inertia: false
+    density: 1000.0
+    displacement_threshold: 0.01
+    rotation_threshold: 0.1
+    penetration_threshold: 0.001
+    hydroelastic_modulus: null  # point contact (hydroelastic causes runtime errors with convex meshes)
+    save_simulation_html: true
+
   # SceneAgent Drake metrics - use pre-computed SDFs with CoACD collision geometry
   # and full inertia tensors from scene-agent
   DrakeCollisionMetricSceneAgent:
@@ -235,4 +262,14 @@ metrics: # Use metric class names as keys (i.e., CamelCase)
     time_step: 1.0e-3
     displacement_threshold: 0.01
     rotation_threshold: 0.1
+    save_simulation_html: true
+
+  # Combined welded equilibrium metric for SceneAgent
+  # Welds BOTH: architectural objects (floor, wall, ceiling supported) AND penetrating objects
+  CombinedWeldedEquilibriumMetricSceneAgent:
+    simulation_time: 5.0
+    time_step: 1.0e-3
+    displacement_threshold: 0.01
+    rotation_threshold: 0.1
+    penetration_threshold: 0.001
     save_simulation_html: true

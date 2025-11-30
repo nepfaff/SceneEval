@@ -14,9 +14,10 @@ evaluation_cfg:
     - OpeningClearanceMetric
     # SceneAgent-specific Drake metrics (use pre-computed SDFs with CoACD collision geometry):
     - DrakeCollisionMetricSceneAgent
-    - StaticEquilibriumMetricSceneAgent
-    - WeldedEquilibriumMetricSceneAgent
+    # - StaticEquilibriumMetricSceneAgent
+    # - WeldedEquilibriumMetricSceneAgent
     - ArchitecturalWeldedEquilibriumMetricSceneAgent
+    - CombinedWeldedEquilibriumMetricSceneAgent
   output_dir: ./output_eval
   save_blend_file: True
   save_trimesh_glb: False

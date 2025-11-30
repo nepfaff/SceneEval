@@ -931,3 +931,308 @@ class ArchitecturalWeldedEquilibriumMetricSceneAgent(BaseMetric):
                 print(f"\nWelded objects (architectural support): {objects_to_weld}")
 
         return result
+
+
+@dataclass
+class CombinedWeldedEquilibriumMetricSceneAgentConfig:
+    """Configuration for the combined welded equilibrium metric for SceneAgent.
+
+    This metric combines both welding strategies:
+    1. Architectural welding: Objects supported by floor, wall, or ceiling
+    2. Penetration welding: Objects involved in penetrations with other objects
+
+    Attributes:
+        simulation_time: Time to simulate in seconds.
+        time_step: Drake simulation time step.
+        displacement_threshold: Maximum displacement for an object to be "stable" (meters).
+        rotation_threshold: Maximum rotation for an object to be "stable" (radians).
+        penetration_threshold: Minimum penetration depth to weld objects (meters).
+        save_simulation_html: If True, save meshcat visualization to HTML file.
+    """
+
+    simulation_time: float = 5.0
+    time_step: float = 0.001
+    displacement_threshold: float = 0.01
+    rotation_threshold: float = 0.1
+    penetration_threshold: float = 0.001
+    save_simulation_html: bool = True
+
+
+@register_non_vlm_metric(config_class=CombinedWeldedEquilibriumMetricSceneAgentConfig)
+class CombinedWeldedEquilibriumMetricSceneAgent(BaseMetric):
+    """Combined welded equilibrium metric for SceneAgent.
+
+    Combines both welding strategies:
+    1. Architectural welding: Objects supported by floor, wall, or ceiling
+    2. Penetration welding: Objects involved in penetrations with other objects
+
+    Uses SceneAgent's pre-computed CoACD SDFs with full inertia tensors.
+    Objects that meet EITHER criterion are welded to world.
+    """
+
+    drake_scene_folder: str = "combined_welded_equilibrium_scene_agent"
+
+    def __init__(self, scene: Scene, output_dir: pathlib.Path, cfg, **kwargs) -> None:
+        self.scene = scene
+        self.output_dir = output_dir
+        self.cfg = cfg
+
+    def _get_architectural_objects(self) -> list[str]:
+        """Get object IDs for objects supported by architectural elements.
+
+        Returns:
+            List of object IDs that are supported by floor, wall, or ceiling.
+        """
+        support_type_file = self.scene.output_dir / "obj_support_type_result.json"
+        if not support_type_file.exists():
+            return []
+
+        with open(support_type_file) as f:
+            support_types = json.load(f)
+
+        return [
+            obj_id for obj_id, support_type in support_types.items()
+            if support_type in ("ground", "wall", "ceiling")
+        ]
+
+    def run(self, verbose: bool = False) -> MetricResult:
+        # Get SceneAgent-specific paths
+        scene_json_path, assets_dir = _get_scene_agent_paths(self.output_dir)
+
+        # Validate paths exist
+        if not scene_json_path.exists():
+            return MetricResult(
+                message=f"SceneAgent scene JSON not found: {scene_json_path}",
+                data={"error": f"Scene JSON not found: {scene_json_path}"},
+            )
+        if not assets_dir.exists():
+            return MetricResult(
+                message=f"SceneAgent assets dir not found: {assets_dir}",
+                data={"error": f"Assets dir not found: {assets_dir}"},
+            )
+
+        drake_scene_dir = self.output_dir / self.drake_scene_folder
+        drake_scene_dir.mkdir(parents=True, exist_ok=True)
+
+        # Get architectural objects to weld
+        architectural_objects = self._get_architectural_objects()
+        architectural_objects_set = set(architectural_objects)
+
+        if verbose and architectural_objects:
+            print(f"Architectural objects to weld: {architectural_objects}")
+
+        # Step 1: Detect penetrating objects
+        builder, plant, scene_graph, obj_id_to_model_name = create_drake_plant_from_scene_agent(
+            scene=self.scene,
+            scene_json_path=scene_json_path,
+            assets_dir=assets_dir,
+            time_step=0.0,  # Static query
+            temp_dir=drake_scene_dir / "penetration_detection",
+            weld_to_world=[],
+        )
+
+        diagram = builder.Build()
+        context = diagram.CreateDefaultContext()
+
+        penetrating_pairs = detect_penetrating_pairs(
+            plant=plant,
+            scene_graph=scene_graph,
+            context=context,
+            threshold=self.cfg.penetration_threshold,
+            obj_id_to_model_name=obj_id_to_model_name,
+        )
+
+        # Collect objects involved in penetrations
+        penetrating_objects = set()
+        penetrating_pairs_info = []
+
+        for obj_a, obj_b, depth in penetrating_pairs:
+            if obj_a != "floor_plan":
+                penetrating_objects.add(obj_a)
+            if obj_b != "floor_plan":
+                penetrating_objects.add(obj_b)
+
+            penetrating_pairs_info.append({
+                "obj_a": obj_a,
+                "obj_b": obj_b,
+                "penetration_depth": depth,
+            })
+
+        if verbose:
+            print(f"Detected {len(penetrating_pairs)} penetrating pairs")
+            if penetrating_objects:
+                print(f"Penetrating objects to weld: {penetrating_objects}")
+
+        # Combine architectural and penetrating objects
+        all_objects_to_weld = architectural_objects_set | penetrating_objects
+        objects_to_weld = list(all_objects_to_weld)
+
+        # Track weld reasons for each object
+        weld_reasons = {}
+        for obj_id in all_objects_to_weld:
+            is_architectural = obj_id in architectural_objects_set
+            is_penetrating = obj_id in penetrating_objects
+            if is_architectural and is_penetrating:
+                weld_reasons[obj_id] = "both"
+            elif is_architectural:
+                weld_reasons[obj_id] = "architectural_support"
+            else:
+                weld_reasons[obj_id] = "penetration"
+
+        if verbose:
+            print(f"Total objects to weld: {len(objects_to_weld)}")
+
+        # Step 2: Create new plant with all welded objects and simulate
+        builder2, plant2, scene_graph2, obj_id_to_model_name2 = create_drake_plant_from_scene_agent(
+            scene=self.scene,
+            scene_json_path=scene_json_path,
+            assets_dir=assets_dir,
+            time_step=self.cfg.time_step,
+            temp_dir=drake_scene_dir / "simulation",
+            weld_to_world=objects_to_weld,
+        )
+
+        html_path = None
+        if getattr(self.cfg, "save_simulation_html", False):
+            html_path = drake_scene_dir / "simulation" / "simulation.html"
+
+        diagram2, initial_context2, final_context2 = run_simulation(
+            builder=builder2,
+            plant=plant2,
+            simulation_time=self.cfg.simulation_time,
+            scene_graph=scene_graph2,
+            output_html_path=html_path,
+        )
+
+        # Get plant contexts
+        initial_plant_context = plant2.GetMyContextFromRoot(initial_context2)
+        final_plant_context = plant2.GetMyContextFromRoot(final_context2)
+
+        # Measure displacement for non-welded objects
+        non_welded_obj_id_to_model_name = {
+            obj_id: model_name
+            for obj_id, model_name in obj_id_to_model_name2.items()
+            if obj_id not in all_objects_to_weld
+        }
+
+        displacement_results = measure_displacement(
+            plant=plant2,
+            initial_context=initial_plant_context,
+            final_context=final_plant_context,
+            obj_id_to_model_name=non_welded_obj_id_to_model_name,
+        )
+
+        # Compute per-object stability
+        per_object_results = {}
+        displacements = []
+        rotations = []
+
+        for obj_id, data in displacement_results.items():
+            displacement = data["displacement"]
+            rotation = data["rotation"]
+
+            stable = (
+                not np.isnan(displacement)
+                and not np.isnan(rotation)
+                and displacement <= self.cfg.displacement_threshold
+                and rotation <= self.cfg.rotation_threshold
+            )
+
+            per_object_results[obj_id] = {
+                "stable": stable,
+                "displacement": displacement,
+                "rotation": rotation,
+                "initial_position": data["initial_position"],
+                "final_position": data["final_position"],
+                "welded": False,
+            }
+
+            if not np.isnan(displacement):
+                displacements.append(displacement)
+            if not np.isnan(rotation):
+                rotations.append(rotation)
+
+        # Add welded objects
+        for obj_id in objects_to_weld:
+            per_object_results[obj_id] = {
+                "stable": True,
+                "displacement": 0.0,
+                "rotation": 0.0,
+                "initial_position": None,
+                "final_position": None,
+                "welded": True,
+                "weld_reason": weld_reasons[obj_id],
+            }
+
+        # Compute aggregate statistics
+        num_stable = sum(
+            1 for r in per_object_results.values()
+            if r["stable"] and not r.get("welded", False)
+        )
+        num_unstable = sum(
+            1 for r in per_object_results.values()
+            if not r["stable"] and not r.get("welded", False)
+        )
+        num_non_welded = num_stable + num_unstable
+        scene_stable = num_unstable == 0
+
+        max_displacement = max(displacements) if displacements else 0.0
+        mean_displacement = np.mean(displacements) if displacements else 0.0
+        total_displacement = sum(displacements)
+
+        max_rotation = max(rotations) if rotations else 0.0
+        mean_rotation = np.mean(rotations) if rotations else 0.0
+
+        result = MetricResult(
+            message=(
+                f"Combined welded equilibrium (SceneAgent CoACD): scene_stable={scene_stable}, "
+                f"{num_stable}/{num_non_welded} stable (non-welded) objects, "
+                f"{len(objects_to_weld)} welded ({len(architectural_objects_set)} architectural, "
+                f"{len(penetrating_objects)} penetrating), "
+                f"mean_displacement={mean_displacement:.4f}m, "
+                f"max_displacement={max_displacement:.4f}m"
+            ),
+            data={
+                "scene_stable": scene_stable,
+                "num_stable_objects": num_stable,
+                "num_unstable_objects": num_unstable,
+                "max_displacement": float(max_displacement),
+                "mean_displacement": float(mean_displacement),
+                "max_rotation": float(max_rotation),
+                "mean_rotation": float(mean_rotation),
+                "total_displacement": float(total_displacement),
+                "per_object_results": per_object_results,
+                # All welded objects
+                "welded_objects": objects_to_weld,
+                "num_welded_objects": len(objects_to_weld),
+                # Breakdown by reason
+                "welded_objects_architectural": list(architectural_objects_set),
+                "welded_objects_penetrating": list(penetrating_objects),
+                "num_welded_architectural": len(architectural_objects_set),
+                "num_welded_penetrating": len(penetrating_objects),
+                # Penetration info
+                "penetrating_pairs": penetrating_pairs_info,
+                "num_penetrating_pairs": len(penetrating_pairs_info),
+                "decomposition_method": "coacd",
+                "source": "scene_agent_precomputed",
+            },
+        )
+
+        if verbose:
+            print(f"\n{result.message}\n")
+            print("Non-welded objects:")
+            for obj_id, obj_result in per_object_results.items():
+                if not obj_result.get("welded", False):
+                    status = "STABLE" if obj_result["stable"] else "UNSTABLE"
+                    print(
+                        f"  {obj_id}: {status} "
+                        f"(displacement={obj_result['displacement']:.4f}m, "
+                        f"rotation={obj_result['rotation']:.4f}rad)"
+                    )
+            if objects_to_weld:
+                print(f"\nWelded objects:")
+                for obj_id in objects_to_weld:
+                    reason = weld_reasons[obj_id]
+                    print(f"  {obj_id}: {reason}")
+
+        return result
