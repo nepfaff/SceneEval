@@ -1,3 +1,4 @@
+import logging
 import warnings
 import pathlib
 import bpy
@@ -5,6 +6,8 @@ import shapely
 import numpy as np
 from dataclasses import dataclass, field
 from mathutils import Vector, Matrix
+
+logger = logging.getLogger(__name__)
 from .scene_state import SceneState
 from .config import SceneConfig
 from .obj import Obj
@@ -351,6 +354,37 @@ class BlenderScene:
         b_new_obj = bpy.context.active_object
         b_new_obj.name = f"idx{obj.index}_{obj.model_id}"
         self.b_objs[b_new_obj.name] = b_new_obj # Blender may not assign the exact name, so getting it from the object
+
+        # Merge duplicate vertices and decimate if needed (to prevent memory exhaustion)
+        # Merge first preserves mesh quality better than decimation alone
+        MAX_FACES = 250000
+        total_faces = sum(len(mesh_obj.data.polygons) for mesh_obj in [b_new_obj] + list(b_new_obj.children_recursive) if mesh_obj.type == 'MESH')
+        if total_faces > MAX_FACES:
+            # First, merge vertices by distance (Blender's default threshold is 0.001m)
+            for mesh_obj in [b_new_obj] + list(b_new_obj.children_recursive):
+                if mesh_obj.type == 'MESH':
+                    bpy.context.view_layer.objects.active = mesh_obj
+                    bpy.ops.object.mode_set(mode='EDIT')
+                    bpy.ops.mesh.select_all(action='SELECT')
+                    bpy.ops.mesh.remove_doubles(threshold=0.001)
+                    bpy.ops.object.mode_set(mode='OBJECT')
+
+            # Check face count after merge
+            merged_faces = sum(len(mesh_obj.data.polygons) for mesh_obj in [b_new_obj] + list(b_new_obj.children_recursive) if mesh_obj.type == 'MESH')
+
+            if merged_faces < total_faces:
+                logger.info(f"Merged vertices {b_new_obj.name}: {total_faces} -> {merged_faces} faces")
+
+            # Only decimate if still over threshold after merge
+            if merged_faces > MAX_FACES:
+                ratio = MAX_FACES / merged_faces
+                for mesh_obj in [b_new_obj] + list(b_new_obj.children_recursive):
+                    if mesh_obj.type == 'MESH':
+                        modifier = mesh_obj.modifiers.new(name="Decimate", type='DECIMATE')
+                        modifier.ratio = ratio
+                        bpy.context.view_layer.objects.active = mesh_obj
+                        bpy.ops.object.modifier_apply(modifier="Decimate")
+                logger.info(f"Decimated {b_new_obj.name}: {merged_faces} -> ~{MAX_FACES} faces")
 
         # NOTE: For 3D-FUTURE assets, adjust the material's transmission to 0 because they are too shiny
         # This is a workaround for the issue that the 3D-FUTURE assets are too shiny and cause issues with rendering

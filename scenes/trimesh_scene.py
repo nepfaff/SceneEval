@@ -1,9 +1,12 @@
+import logging
 import warnings
 import shapely
 import trimesh
 import trimesh.repair
 import numpy as np
 from dataclasses import dataclass
+
+logger = logging.getLogger(__name__)
 from .scene_state import SceneState
 from .config import SceneConfig
 from .obj import Obj
@@ -98,7 +101,25 @@ class TrimeshScene:
         
         # Load the object file as a Trimesh mesh
         mesh = trimesh.load(file_path, force="mesh")
-        
+
+        # Merge duplicate vertices by distance (cleanup before potential decimation)
+        # This preserves mesh quality better than decimation alone
+        MAX_FACES = 250000
+        if hasattr(mesh, 'faces') and len(mesh.faces) > MAX_FACES:
+            original_vertices = len(mesh.vertices)
+            original_faces = len(mesh.faces)
+            mesh.merge_vertices()
+            merged_vertices = len(mesh.vertices)
+            merged_faces = len(mesh.faces)
+
+            if merged_vertices < original_vertices:
+                logger.info(f"Merged vertices {obj.model_id}: {original_vertices} -> {merged_vertices} vertices, {original_faces} -> {merged_faces} faces")
+
+            # Only decimate if still over threshold after merge
+            if merged_faces > MAX_FACES:
+                mesh = mesh.simplify_quadric_decimation(face_count=MAX_FACES)
+                logger.info(f"Decimated {obj.model_id}: {merged_faces} -> {len(mesh.faces)} faces")
+
         # Apply extra rotation transform from the asset itself to normalize the mesh
         if extra_rotation_transform is not None:
             mesh.apply_transform(extra_rotation_transform)
