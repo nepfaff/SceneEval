@@ -283,13 +283,13 @@ def generate_object_id_from_blender(obj: bpy.types.Object) -> str:
     Generate a unique ID from Blender object name.
 
     Input pattern: {FactoryType}({seed}).spawn_asset({seed2})
-    Output pattern: {seed}_{FactoryType} or {seed}_{FactoryType}.001
+    Output pattern: {seed}_{FactoryType}_{seed2} or {seed}_{FactoryType}_{seed2}.001
 
     Args:
         obj: Blender object
 
     Returns:
-        Human-readable object ID like "3164690_BedFactory" or "3164690_PillowFactory.001"
+        Human-readable object ID like "3164690_BedFactory_7191960" or "3164690_PillowFactory_123.001"
     """
     name = obj.name
 
@@ -305,6 +305,16 @@ def generate_object_id_from_blender(obj: bpy.types.Object) -> str:
     except:
         seed = "0"
 
+    # Extract spawn_asset seed (number between parentheses after .spawn_asset)
+    spawn_seed = "0"
+    spawn_marker = ".spawn_asset("
+    spawn_idx = name.find(spawn_marker)
+    if spawn_idx >= 0:
+        spawn_start = spawn_idx + len(spawn_marker)
+        spawn_end = name.find(")", spawn_start)
+        if spawn_end > spawn_start:
+            spawn_seed = name[spawn_start:spawn_end]
+
     # Handle Blender duplicate suffix (.001, .002, etc.)
     # These appear after the last closing parenthesis
     suffix = ""
@@ -312,7 +322,7 @@ def generate_object_id_from_blender(obj: bpy.types.Object) -> str:
     if last_paren >= 0 and last_paren < len(name) - 1:
         suffix = name[last_paren + 1:]  # e.g., ".001"
 
-    return f"{seed}_{factory_type}{suffix}"
+    return f"{seed}_{factory_type}_{spawn_seed}{suffix}"
 
 
 def find_all_spawn_asset_objects() -> list[bpy.types.Object]:
