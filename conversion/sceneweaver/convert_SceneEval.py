@@ -1170,7 +1170,7 @@ def convert_sceneweaver_scene(
         # Build object entry
         obj_entry = {
             "id": obj_id,
-            "modelId": f"sceneweaver.scene_{scene_id}__{obj_id}",
+            "modelId": f"sw.s{scene_id}__{obj_id}",
             "index": len(objects_data),
             "parentId": "",
             "parentIndex": -1,
@@ -1198,7 +1198,7 @@ def convert_sceneweaver_scene(
                 print(f"      Exported: {floor_glb.name}")
                 architecture_objects.append({
                     "id": "architecture_floor",
-                    "modelId": f"sceneweaver.scene_{scene_id}__architecture_floor",
+                    "modelId": f"sw.s{scene_id}__architecture_floor",
                     "index": len(objects_data) + len(architecture_objects),
                     "parentId": "",
                     "parentIndex": -1,
@@ -1221,7 +1221,7 @@ def convert_sceneweaver_scene(
                 print(f"      Exported: {wall_glb.name}")
                 architecture_objects.append({
                     "id": "architecture_walls",
-                    "modelId": f"sceneweaver.scene_{scene_id}__architecture_walls",
+                    "modelId": f"sw.s{scene_id}__architecture_walls",
                     "index": len(objects_data) + len(architecture_objects),
                     "parentId": "",
                     "parentIndex": -1,

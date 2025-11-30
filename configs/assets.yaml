@@ -24,6 +24,11 @@ assets:
     dataset_root_path: input/SceneWeaver  # Assets are exported per-scene under scene_X/assets/
     dataset_metadata_path: null  # No central metadata file
 
+  sw:  # Short alias for sceneweaver to avoid Blender's 63-char name limit
+    asset_id_prefix: sw
+    dataset_root_path: input/SceneWeaver  # Same as sceneweaver
+    dataset_metadata_path: null
+
   scene_agent:
     asset_id_prefix: scene-agent
     dataset_root_path: input/SceneAgent  # Assets are exported per-scene under scene_X/assets/

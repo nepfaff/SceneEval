@@ -15,6 +15,7 @@ from .registry import register_dataset
 
 
 @register_dataset("sceneweaver")
+@register_dataset("sw")  # Short alias to avoid Blender's 63-char name limit
 class SceneWeaverAssetDataset(BaseAssetDataset):
     """
     Dataset for SceneWeaver exported assets.
@@ -46,23 +47,25 @@ class SceneWeaverAssetDataset(BaseAssetDataset):
         Returns:
             AssetInfo object containing the asset's information
         """
-        # Parse asset_id: scene_0__5348940_BedFactory
+        # Parse asset_id: scene_0__5348940_BedFactory or s0__5348940_BedFactory (short form)
         if "__" not in asset_id:
             raise ValueError(
                 f"Invalid SceneWeaver asset ID format: {asset_id}. "
-                f"Expected format: scene_{{scene_id}}__{{obj_name}}"
+                f"Expected format: scene_{{scene_id}}__{{obj_name}} or s{{scene_id}}__{{obj_name}}"
             )
 
         scene_part, obj_name = asset_id.split("__", 1)
 
-        # Extract scene_id from scene_X
-        if not scene_part.startswith("scene_"):
+        # Extract scene_id from scene_X or sX (short form)
+        if scene_part.startswith("scene_"):
+            scene_id = scene_part[6:]  # Remove "scene_" prefix
+        elif scene_part.startswith("s"):
+            scene_id = scene_part[1:]  # Remove "s" prefix (short form)
+        else:
             raise ValueError(
                 f"Invalid scene identifier: {scene_part}. "
-                f"Expected format: scene_{{scene_id}}"
+                f"Expected format: scene_{{scene_id}} or s{{scene_id}}"
             )
-
-        scene_id = scene_part[6:]  # Remove "scene_" prefix
 
         # Build file path: root_dir/scene_X/assets/{obj_name}.glb
         file_path = self.root_dir / f"scene_{scene_id}" / "assets" / f"{obj_name}.glb"

@@ -46,6 +46,7 @@ models:
     output_dir_name: ${models.SceneWeaver.input_dir_name}
     asset_datasets:
       - sceneweaver
+      - sw  # Short alias to avoid Blender's 63-char name limit
 
   SceneAgent:
     input_dir_name: SceneAgent

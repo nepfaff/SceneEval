@@ -3,6 +3,7 @@ bounding_box:
   epsilon: 1e-6
   sample_points_per_unit_volume: 5000
   min_num_sample_points: 64
+  max_num_sample_points: 100000  # Cap to prevent memory explosion
   presample_points: False
 
 metrics: # Use metric class names as keys (i.e., CamelCase)

@@ -366,8 +366,10 @@ class BlenderScene:
         
         # The imported object becomes the active object, rename for identification
         b_new_obj = bpy.context.active_object
-        b_new_obj.name = f"idx{obj.index}_{obj.model_id}"
-        self.b_objs[b_new_obj.name] = b_new_obj # Blender may not assign the exact name, so getting it from the object
+        expected_name = f"idx{obj.index}_{obj.model_id}"
+        b_new_obj.name = expected_name  # Blender may truncate to 63 chars
+        # Use expected_name as key (not b_new_obj.name) to match trimesh_scene naming
+        self.b_objs[expected_name] = b_new_obj
 
         # Apply object scale to mesh vertices (normalize the object representation)
         # This ensures matrix_world only contains rotation and translation, not scale
@@ -444,7 +446,7 @@ class BlenderScene:
         # NOTE: This fixes the orientation for some asset types but NOT for SceneWeaver, Scene Agent, or IDesign
         # SceneWeaver and Scene Agent exports are already correctly oriented (Z-up via glTF Y-up conversion)
         # IDesign GLBs are kept in Y-up so Blender's automatic Y-up to Z-up conversion works correctly
-        if not obj.model_id.startswith("sceneweaver") and not obj.model_id.startswith("scene-agent") and not obj.model_id.startswith("idesign"):
+        if not obj.model_id.startswith(("sceneweaver", "sw.")) and not obj.model_id.startswith("scene-agent") and not obj.model_id.startswith("idesign"):
             neg_90_x = Matrix.Rotation(-np.pi / 2, 4, "X")
             b_new_obj.matrix_world = b_new_obj.matrix_world @ neg_90_x
 
@@ -477,9 +479,9 @@ class BlenderScene:
         if self.scene_cfg.use_converted_architecture and self.scene_state and self.scene_state.objs:
             # Check if this is a SceneWeaver scene by looking at object model IDs
             first_obj_model_id = self.scene_state.objs[0].model_id if self.scene_state.objs else None
-            if first_obj_model_id and first_obj_model_id.startswith("sceneweaver."):
+            if first_obj_model_id and first_obj_model_id.startswith(("sceneweaver.", "sw.")):
                 # Extract scene ID and find assets directory
-                # Format: sceneweaver.scene_0__obj_name
+                # Format: sceneweaver.scene_0__obj_name or sw.s0__obj_name
                 try:
                     asset_info = self.retriever.get_asset_info(first_obj_model_id)
                     # Asset path is like: .../scene_X/assets/obj_name.glb
