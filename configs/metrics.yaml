@@ -131,7 +131,7 @@ metrics: # Use metric class names as keys (i.e., CamelCase)
   # Drake collision metrics (CoACD variant)
   DrakeCollisionMetricCoACD:
     penetration_threshold: 0.001
-    coacd_threshold: 0.05
+    coacd_threshold: 0.03
 
   # Drake collision metrics (VHACD variant)
   DrakeCollisionMetricVHACD:
@@ -143,7 +143,7 @@ metrics: # Use metric class names as keys (i.e., CamelCase)
     time_step: 1.0e-3
     use_trimesh_inertia: false
     density: 1000.0
-    coacd_threshold: 0.05
+    coacd_threshold: 0.03
     displacement_threshold: 0.01
     rotation_threshold: 0.1
     hydroelastic_modulus: null  # point contact (hydroelastic causes runtime errors with convex meshes)
@@ -166,7 +166,7 @@ metrics: # Use metric class names as keys (i.e., CamelCase)
     time_step: 1.0e-3
     use_trimesh_inertia: false
     density: 1000.0
-    coacd_threshold: 0.05
+    coacd_threshold: 0.03
     displacement_threshold: 0.01
     rotation_threshold: 0.1
     penetration_threshold: 0.001
@@ -190,7 +190,7 @@ metrics: # Use metric class names as keys (i.e., CamelCase)
   ArchitecturalWeldedEquilibriumMetricCoACD:
     simulation_time: 5.0
     time_step: 1.0e-3
-    coacd_threshold: 0.05
+    coacd_threshold: 0.03
     displacement_threshold: 0.01
     rotation_threshold: 0.1
     hydroelastic_modulus: null  # point contact (hydroelastic causes runtime errors with convex meshes)
@@ -215,7 +215,7 @@ metrics: # Use metric class names as keys (i.e., CamelCase)
     time_step: 1.0e-3
     use_trimesh_inertia: false
     density: 1000.0
-    coacd_threshold: 0.05
+    coacd_threshold: 0.03
     displacement_threshold: 0.01
     rotation_threshold: 0.1
     penetration_threshold: 0.001
