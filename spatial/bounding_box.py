@@ -1,9 +1,12 @@
 from __future__ import annotations
+import logging
 import numpy as np
 import numpy.typing as npt
 import matplotlib.pyplot as plt
 from warnings import warn
 from dataclasses import dataclass
+
+logger = logging.getLogger(__name__)
 
 # ========================================================================================
 
@@ -22,6 +25,7 @@ class BoundingBoxConfig:
     epsilon: float = 1e-6
     sample_points_per_unit_volume: int = 5000
     min_num_sample_points: int = 64
+    max_num_sample_points: int = 50000  # Cap to prevent memory explosion with large volumes
     presample_points: bool = False
 
 # ========================================================================================
@@ -146,10 +150,13 @@ class BoundingBox:
         if self.sampled_points is not None:
             return self.sampled_points
 
-        num_points = int(self.volume * self.cfg.sample_points_per_unit_volume)
-        
-        num_points = max(num_points, self.cfg.min_num_sample_points)  # Ensure at least min_num_sample_points are sampled
-        
+        raw_num_points = int(self.volume * self.cfg.sample_points_per_unit_volume)
+        num_points = max(raw_num_points, self.cfg.min_num_sample_points)  # Ensure at least min_num_sample_points are sampled
+        num_points = min(num_points, self.cfg.max_num_sample_points)  # Cap to prevent memory explosion
+
+        if raw_num_points > self.cfg.max_num_sample_points:
+            logger.info(f"Capped sample points: {raw_num_points} -> {num_points} (volume={self.volume:.2f})")
+
         points = np.random.rand(num_points, 3) * 2 - 1      # Sample points in the [-1, 1] cube centered at the origin
         points = points * self.half_size                    # Scale the points to the bounding box size
         points = (self.coord_axes @ points.T).T             # Rotate the points to the bounding box orientation

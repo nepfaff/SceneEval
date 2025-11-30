@@ -1,7 +1,60 @@
+import logging
 import trimesh
 import numpy as np
 from .bounding_box import BoundingBox
 from .config import ArchitecturalRelationConfig
+
+logger = logging.getLogger(__name__)
+
+# Max vertices for spatial queries (to prevent memory explosion)
+SPATIAL_QUERY_MAX_VERTICES = 5000
+
+def _log_memory(label: str) -> None:
+    """Log current memory usage from /proc/self/status."""
+    try:
+        with open("/proc/self/status", "r") as f:
+            for line in f:
+                if line.startswith("VmRSS:"):
+                    rss = line.split()[1]
+                    unit = line.split()[2] if len(line.split()) > 2 else "kB"
+                    rss_gb = int(rss) / (1024 * 1024) if unit == "kB" else int(rss) / 1024
+                    logger.debug(f"[MEMORY] {label}: {rss_gb:.2f} GB")
+                    return
+    except Exception:
+        pass
+
+def _voxel_downsample_for_query(mesh: trimesh.Trimesh) -> trimesh.Trimesh:
+    """Voxel downsample mesh if needed for spatial queries."""
+    if not hasattr(mesh, 'vertices') or len(mesh.vertices) <= SPATIAL_QUERY_MAX_VERTICES:
+        return mesh
+
+    original_vertices = len(mesh.vertices)
+
+    # Compute voxel pitch to achieve target vertex count
+    # Estimate: vertices ≈ (mesh_size / voxel_pitch)^3
+    mesh_extents = mesh.bounds[1] - mesh.bounds[0]
+    mesh_size = np.mean(mesh_extents)
+    # Target: max_vertices ≈ (mesh_size / pitch)^3
+    # => pitch ≈ mesh_size / (max_vertices)^(1/3)
+    target_pitch = mesh_size / (SPATIAL_QUERY_MAX_VERTICES ** (1 / 3))
+
+    # Ensure minimum pitch to avoid issues with very small meshes
+    target_pitch = max(target_pitch, 0.01)  # At least 1cm
+
+    try:
+        # Create voxel-downsampled copy
+        downsampled_mesh = mesh.copy()
+        downsampled_mesh.merge_vertices()
+        downsampled_mesh = downsampled_mesh.voxelized(pitch=target_pitch).marching_cubes
+
+        logger.info(
+            f"Voxel downsampled for spatial query: {original_vertices} -> {len(downsampled_mesh.vertices)} vertices "
+            f"(pitch={target_pitch:.4f}m)"
+        )
+        return downsampled_mesh
+    except Exception as e:
+        logger.warning(f"Voxel downsampling failed: {e}, using original mesh")
+        return mesh
 
 SIDE_MAP = {
     "left": "-x",
@@ -90,7 +143,7 @@ class ArchitecturalRelationEvaluator:
     def _distance_score(self, obj_t_obj: trimesh.Trimesh, arch_t_obj: trimesh.Trimesh, obj_bbox: BoundingBox, range: list[float], gaussian_std: float = 0.25) -> float:
         """
         Generalized function for calulating the score of how much the target object is a certain distance from the reference object.
-        
+
         Args:
             obj_t_obj: the target object
             arch_t_obj: the reference object
@@ -98,9 +151,13 @@ class ArchitecturalRelationEvaluator:
             range: the range for calculating the score (score is 1.0 when the distance is within the range, decrease gradually to 0.0 when outside)
             gaussian_std: the standard deviation of the Gaussian function
         """
-        
+
         sample_points = obj_bbox.sample_points()
-        closest_points, distances, _ = arch_t_obj.nearest.on_surface(sample_points)
+        # Voxel downsample mesh for spatial query to prevent memory explosion
+        query_mesh = _voxel_downsample_for_query(arch_t_obj)
+        _log_memory(f"Before nearest.on_surface ({len(query_mesh.vertices)} verts, {len(sample_points)} points)")
+        closest_points, distances, _ = query_mesh.nearest.on_surface(sample_points)
+        _log_memory(f"After nearest.on_surface")
         min_distance = min(distances)
         
         # Score is 1.0 when the distance is within the range

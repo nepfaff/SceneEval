@@ -1,3 +1,4 @@
+import logging
 import pathlib
 from warnings import warn
 from dataclasses import dataclass, field
@@ -9,6 +10,22 @@ from spatial import BoundingBox, BoundingBoxConfig, ArchitecturalRelationEvaluat
 from .base import BaseMetric, MetricResult
 from .obj_matching import ObjMatchingResults
 from .registry import register_vlm_metric
+
+logger = logging.getLogger(__name__)
+
+def _log_memory(label: str) -> None:
+    """Log current memory usage from /proc/self/status."""
+    try:
+        with open("/proc/self/status", "r") as f:
+            for line in f:
+                if line.startswith("VmRSS:"):
+                    rss = line.split()[1]
+                    unit = line.split()[2] if len(line.split()) > 2 else "kB"
+                    rss_gb = int(rss) / (1024 * 1024) if unit == "kB" else int(rss) / 1024
+                    logger.debug(f"[MEMORY] {label}: {rss_gb:.2f} GB")
+                    return
+    except Exception:
+        pass
 
 # ----------------------------------------------------------------------------------------
 
@@ -305,14 +322,18 @@ class ObjArchRelationshipMetric(BaseMetric):
                 }
                 
                 # Evaluate the relationship using the function
+                _log_memory(f"ObjArchRel before relation_check obj={obj_id}")
                 relationship_score = relation_check_function(**function_params)
                 candidate_satisfied = bool(relationship_score > self.cfg.relationship_satisfaction_threshold)
                 relationship_candidate_results.append(candidate_satisfied)
-                
+                _log_memory(f"ObjArchRel after relation_check obj={obj_id}")
+
                 # Render the object for visualization
+                _log_memory(f"ObjArchRel before render obj={obj_id}")
                 self.scene.blender_scene.render_selected_objs_global_top([obj_id], pathlib.Path(f"oarel/{spec.replace(',', '_')}/candidate_obj_{evaluations[spec]['num_candidates']}.png"))
+                _log_memory(f"ObjArchRel after render obj={obj_id}")
                 evaluations[spec]["num_candidates"] += 1
-                
+
                 print(f"Spec: {spec}, Object: {obj_id}, Architecture type: {assessment.architectural_element_type}, Relationship: {assessment.relationship_type}, Score: {relationship_score:.2f}")
 
             # --------------------------------------------------------------------------------------

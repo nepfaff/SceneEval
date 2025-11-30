@@ -1,4 +1,5 @@
 import os
+import logging
 import random
 import pathlib
 import shutil
@@ -11,6 +12,22 @@ from dotenv import load_dotenv
 from omegaconf import DictConfig, open_dict
 
 from omegaconf import OmegaConf
+
+logger = logging.getLogger(__name__)
+
+def log_memory(label: str) -> None:
+    """Log current memory usage from /proc/self/status."""
+    try:
+        with open("/proc/self/status", "r") as f:
+            for line in f:
+                if line.startswith("VmRSS:"):
+                    rss = line.split()[1]
+                    unit = line.split()[2] if len(line.split()) > 2 else "kB"
+                    rss_gb = int(rss) / (1024 * 1024) if unit == "kB" else int(rss) / 1024
+                    logger.debug(f"[MEMORY] {label}: {rss_gb:.2f} GB")
+                    return
+    except Exception:
+        pass  # Silently fail on non-Linux systems
 
 from scenes import *
 from metrics import MetricRegistry, ObjMatching, ObjMatchingResults
@@ -518,8 +535,12 @@ def main(cfg: DictConfig) -> None:
             log_path = output_dir / "eval.log"
             with FileLoggingContext(log_file_path=log_path, suppress_stdout=False):
 
+                log_memory("Before scene load")
+
                 # Create the scene with output directory
                 scene = Scene(mesh_retriever, scene_state, scene_cfg, blender_cfg, trimesh_cfg, output_dir)
+
+                log_memory("After scene load")
 
                 # ---------------------------------------------------
 
@@ -535,7 +556,9 @@ def main(cfg: DictConfig) -> None:
 
                 # Render as requested
                 if evaluation_plan.render_cfg.normal_render_tasks:
+                    log_memory("Before rendering")
                     _render_scene(scene, evaluation_plan.render_cfg.normal_render_tasks)
+                    log_memory("After rendering")
 
                 # For SceneWeaver: Copy and render original blend file for comparison
                 # (GLB exports have texture baking issues, original blend has perfect materials)
@@ -614,6 +637,7 @@ def main(cfg: DictConfig) -> None:
                     "output_dir": output_dir
                 }
                 for metric_name in metrics_to_run:
+                    log_memory(f"Before metric {metric_name}")
                     print(f"----- Running metric: {metric_name}")
                     metric_instance = MetricRegistry.instantiate_metric(metric_name, metric_configs, **common_metric_params)
 
@@ -622,6 +646,8 @@ def main(cfg: DictConfig) -> None:
                         "message": result.message,
                         "data": result.data
                     }
+
+                    log_memory(f"After metric {metric_name}")
 
                     # Save results up to this point
                     output_file = output_dir / f"eval_result.json"

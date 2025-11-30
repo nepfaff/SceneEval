@@ -325,11 +325,41 @@ def generate_object_id_from_blender(obj: bpy.types.Object) -> str:
     return f"{seed}_{factory_type}_{spawn_seed}{suffix}"
 
 
+def is_in_hidden_or_asset_collection(obj: bpy.types.Object) -> bool:
+    """
+    Check if an object is in a hidden or raw asset collection.
+
+    SceneWeaver stores raw asset templates in collections prefixed with:
+    - 'assets:' - raw asset collections (e.g., fruits for scatter)
+    - 'placeholders:' - placeholder geometry
+
+    These should NOT be exported as placed scene objects.
+
+    Args:
+        obj: Blender object to check
+
+    Returns:
+        True if object should be excluded from export
+    """
+    # Check all collections this object belongs to
+    for col in obj.users_collection:
+        # Skip objects in raw asset collections
+        if col.name.startswith('assets:'):
+            return True
+        if col.name.startswith('placeholders:'):
+            return True
+        # Skip objects in collections with hide_render=True
+        if col.hide_render:
+            return True
+    return False
+
+
 def find_all_spawn_asset_objects() -> list[bpy.types.Object]:
     """
     Find all Blender objects matching the spawn_asset pattern.
 
     These are individual exportable mesh objects from Infinigen factories.
+    Excludes objects in hidden/asset collections (raw templates not placed in scene).
 
     Pattern: {FactoryType}({seed}).spawn_asset({seed2})
     Examples:
@@ -349,6 +379,10 @@ def find_all_spawn_asset_objects() -> list[bpy.types.Object]:
 
         # Match the spawn_asset pattern
         if ".spawn_asset(" in obj.name:
+            # Skip objects in hidden/asset collections (raw templates, not placed)
+            if is_in_hidden_or_asset_collection(obj):
+                continue
+
             # Validate object has actual geometry
             if obj.data is not None and len(obj.data.vertices) > 0:
                 spawn_asset_objects.append(obj)
@@ -960,6 +994,50 @@ def bake_procedural_materials(obj: bpy.types.Object, output_dir: Path, resolutio
 
 
 # =============================================================================
+# Blend File Cleanup Functions
+# =============================================================================
+
+def _save_cleaned_blend_file(output_path: Path) -> None:
+    """
+    Save a cleaned version of the current blend file.
+
+    Removes objects in hidden/asset collections (raw asset templates) that would
+    cause camera framing issues when rendering. This fixes the "zoomed out" render
+    problem where giant template objects at origin expand the scene bounds.
+
+    Args:
+        output_path: Path to save the cleaned blend file
+    """
+    # Collect objects to delete (can't delete while iterating)
+    objects_to_delete = []
+
+    for obj in bpy.data.objects:
+        if is_in_hidden_or_asset_collection(obj):
+            objects_to_delete.append(obj)
+
+    # Delete the objects
+    if objects_to_delete:
+        print(f"    Removing {len(objects_to_delete)} raw asset objects from blend file")
+        for obj in objects_to_delete:
+            bpy.data.objects.remove(obj, do_unlink=True)
+
+    # Also delete the empty asset collections
+    collections_to_delete = []
+    for col in bpy.data.collections:
+        if col.name.startswith('assets:') or col.name.startswith('placeholders:'):
+            collections_to_delete.append(col)
+
+    for col in collections_to_delete:
+        bpy.data.collections.remove(col)
+
+    # Clean up orphan data (meshes, materials, etc. no longer used)
+    bpy.ops.outliner.orphans_purge(do_recursive=True)
+
+    # Save the cleaned blend file
+    bpy.ops.wm.save_as_mainfile(filepath=str(output_path))
+
+
+# =============================================================================
 # Blender Export Functions
 # =============================================================================
 
@@ -1175,12 +1253,12 @@ def convert_sceneweaver_scene(
     print(f"  Saved scene state: {output_json}")
     print(f"  Exported {len(objects_data)} objects")
 
-    # Copy original blend file for high-quality rendering
+    # Save cleaned blend file for high-quality rendering
     # (The GLB exports have texture baking issues, original blend has perfect materials)
-    import shutil
+    # Remove objects in hidden/asset collections to fix camera framing and reduce file size
     original_blend_dest = scene_assets_dir / "original_sceneweaver.blend"
-    shutil.copy2(blend_file, original_blend_dest)
-    print(f"  Copied original blend file: {original_blend_dest}")
+    _save_cleaned_blend_file(original_blend_dest)
+    print(f"  Saved cleaned blend file: {original_blend_dest}")
 
     return output_json
 

@@ -104,11 +104,12 @@ class TrimeshScene:
 
         # Merge duplicate vertices by distance (cleanup before potential decimation)
         # This preserves mesh quality better than decimation alone
+        # Use digits_vertex=4 for ~0.0001m precision (matching Blender's 0.001m threshold)
         MAX_FACES = 250000
         if hasattr(mesh, 'faces') and len(mesh.faces) > MAX_FACES:
             original_vertices = len(mesh.vertices)
             original_faces = len(mesh.faces)
-            mesh.merge_vertices()
+            mesh.merge_vertices(digits_vertex=4)
             merged_vertices = len(mesh.vertices)
             merged_faces = len(mesh.faces)
 

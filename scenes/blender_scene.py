@@ -8,6 +8,20 @@ from dataclasses import dataclass, field
 from mathutils import Vector, Matrix
 
 logger = logging.getLogger(__name__)
+
+def _log_memory(label: str) -> None:
+    """Log current memory usage from /proc/self/status."""
+    try:
+        with open("/proc/self/status", "r") as f:
+            for line in f:
+                if line.startswith("VmRSS:"):
+                    rss = line.split()[1]
+                    unit = line.split()[2] if len(line.split()) > 2 else "kB"
+                    rss_gb = int(rss) / (1024 * 1024) if unit == "kB" else int(rss) / 1024
+                    logger.debug(f"[MEMORY] {label}: {rss_gb:.2f} GB")
+                    return
+    except Exception:
+        pass
 from .scene_state import SceneState
 from .config import SceneConfig
 from .obj import Obj
@@ -354,6 +368,15 @@ class BlenderScene:
         b_new_obj = bpy.context.active_object
         b_new_obj.name = f"idx{obj.index}_{obj.model_id}"
         self.b_objs[b_new_obj.name] = b_new_obj # Blender may not assign the exact name, so getting it from the object
+
+        # Apply object scale to mesh vertices (normalize the object representation)
+        # This ensures matrix_world only contains rotation and translation, not scale
+        # Fixes mismatch between Blender (preserves GLB node scale) and Trimesh (flattens to vertices)
+        # For objects with scale=1.0 (e.g., SceneWeaver), this is a no-op
+        bpy.ops.object.select_all(action='DESELECT')
+        b_new_obj.select_set(True)
+        bpy.context.view_layer.objects.active = b_new_obj
+        bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
 
         # Merge duplicate vertices and decimate if needed (to prevent memory exhaustion)
         # Merge first preserves mesh quality better than decimation alone
@@ -1027,7 +1050,9 @@ class BlenderScene:
         bpy.context.scene.render.filepath = str(self.output_dir / relative_file_path)
 
         # Render using the current scene camera
+        _log_memory(f"Blender before bpy.ops.render.render -> {relative_file_path}")
         bpy.ops.render.render(write_still=True)
+        _log_memory(f"Blender after bpy.ops.render.render -> {relative_file_path}")
         
     def render_one_obj(self,
                        b_obj: bpy.types.Object,
