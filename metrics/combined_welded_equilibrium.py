@@ -54,6 +54,7 @@ class CombinedWeldedEquilibriumMetricConfigCoACD:
     penetration_threshold: float = 0.001
     save_simulation_html: bool = True
     hydroelastic_modulus: float | None = None
+    weld_floor_objects: bool = False
 
 
 @dataclass
@@ -83,6 +84,7 @@ class CombinedWeldedEquilibriumMetricConfigVHACD:
     penetration_threshold: float = 0.001
     save_simulation_html: bool = True
     hydroelastic_modulus: float | None = None
+    weld_floor_objects: bool = False
 
 
 class CombinedWeldedEquilibriumMetricBase(BaseMetric):
@@ -120,7 +122,7 @@ class CombinedWeldedEquilibriumMetricBase(BaseMetric):
         """Get object IDs for objects supported by architectural elements.
 
         Returns:
-            List of object IDs that are supported by floor, wall, or ceiling.
+            List of object IDs that are supported by wall, ceiling, or optionally floor.
         """
         support_type_file = self.scene.output_dir / "obj_support_type_result.json"
         if not support_type_file.exists():
@@ -129,9 +131,14 @@ class CombinedWeldedEquilibriumMetricBase(BaseMetric):
         with open(support_type_file) as f:
             support_types = json.load(f)
 
+        # Build list of support types to weld (wall/ceiling always, floor optionally)
+        architectural_support_types = ["wall", "ceiling"]
+        if self.cfg.weld_floor_objects:
+            architectural_support_types.append("ground")
+
         architectural_objects = []
         for obj_id, support_type in support_types.items():
-            if support_type in ("ground", "wall", "ceiling"):
+            if support_type in architectural_support_types:
                 architectural_objects.append(obj_id)
 
         return architectural_objects

@@ -186,7 +186,7 @@ metrics: # Use metric class names as keys (i.e., CamelCase)
     save_simulation_html: true
 
   # Architectural welded equilibrium metrics (CoACD variant)
-  # Welds floor, wall, ceiling objects - only "object" type objects move freely
+  # Welds wall, ceiling objects (optionally floor if weld_floor_objects=true)
   ArchitecturalWeldedEquilibriumMetricCoACD:
     simulation_time: 5.0
     time_step: 1.0e-3
@@ -195,9 +195,10 @@ metrics: # Use metric class names as keys (i.e., CamelCase)
     rotation_threshold: 0.1
     hydroelastic_modulus: null  # point contact (hydroelastic causes runtime errors with convex meshes)
     save_simulation_html: true
+    weld_floor_objects: false  # If true, also weld floor-supported objects
 
   # Architectural welded equilibrium metrics (VHACD variant)
-  # Welds floor, wall, ceiling objects - only "object" type objects move freely
+  # Welds wall, ceiling objects (optionally floor if weld_floor_objects=true)
   ArchitecturalWeldedEquilibriumMetricVHACD:
     simulation_time: 5.0
     time_step: 1.0e-3
@@ -205,9 +206,10 @@ metrics: # Use metric class names as keys (i.e., CamelCase)
     rotation_threshold: 0.1
     hydroelastic_modulus: null  # point contact (hydroelastic causes runtime errors with convex meshes)
     save_simulation_html: true
+    weld_floor_objects: false  # If true, also weld floor-supported objects
 
   # Combined welded equilibrium metrics (CoACD variant)
-  # Welds BOTH: architectural objects (floor, wall, ceiling supported) AND penetrating objects
+  # Welds BOTH: architectural objects (wall, ceiling; optionally floor) AND penetrating objects
   CombinedWeldedEquilibriumMetricCoACD:
     simulation_time: 5.0
     time_step: 1.0e-3
@@ -219,9 +221,10 @@ metrics: # Use metric class names as keys (i.e., CamelCase)
     penetration_threshold: 0.001
     hydroelastic_modulus: null  # point contact (hydroelastic causes runtime errors with convex meshes)
     save_simulation_html: true
+    weld_floor_objects: false  # If true, also weld floor-supported objects
 
   # Combined welded equilibrium metrics (VHACD variant)
-  # Welds BOTH: architectural objects (floor, wall, ceiling supported) AND penetrating objects
+  # Welds BOTH: architectural objects (wall, ceiling; optionally floor) AND penetrating objects
   CombinedWeldedEquilibriumMetricVHACD:
     simulation_time: 5.0
     time_step: 1.0e-3
@@ -232,6 +235,7 @@ metrics: # Use metric class names as keys (i.e., CamelCase)
     penetration_threshold: 0.001
     hydroelastic_modulus: null  # point contact (hydroelastic causes runtime errors with convex meshes)
     save_simulation_html: true
+    weld_floor_objects: false  # If true, also weld floor-supported objects
 
   # SceneAgent Drake metrics - use pre-computed SDFs with CoACD collision geometry
   # and full inertia tensors from scene-agent
@@ -256,16 +260,17 @@ metrics: # Use metric class names as keys (i.e., CamelCase)
     save_simulation_html: true
 
   # Architectural welded equilibrium metric for SceneAgent
-  # Welds floor, wall, ceiling supported objects - only "object" type objects move freely
+  # Welds wall, ceiling objects (optionally floor if weld_floor_objects=true)
   ArchitecturalWeldedEquilibriumMetricSceneAgent:
     simulation_time: 5.0
     time_step: 1.0e-3
     displacement_threshold: 0.01
     rotation_threshold: 0.1
     save_simulation_html: true
+    weld_floor_objects: false  # If true, also weld floor-supported objects
 
   # Combined welded equilibrium metric for SceneAgent
-  # Welds BOTH: architectural objects (floor, wall, ceiling supported) AND penetrating objects
+  # Welds BOTH: architectural objects (wall, ceiling; optionally floor) AND penetrating objects
   CombinedWeldedEquilibriumMetricSceneAgent:
     simulation_time: 5.0
     time_step: 1.0e-3
@@ -273,3 +278,4 @@ metrics: # Use metric class names as keys (i.e., CamelCase)
     rotation_threshold: 0.1
     penetration_threshold: 0.001
     save_simulation_html: true
+    weld_floor_objects: false  # If true, also weld floor-supported objects

@@ -724,6 +724,7 @@ class ArchitecturalWeldedEquilibriumMetricSceneAgentConfig:
     displacement_threshold: float = 0.01
     rotation_threshold: float = 0.1
     save_simulation_html: bool = True
+    weld_floor_objects: bool = False
 
 
 @register_non_vlm_metric(config_class=ArchitecturalWeldedEquilibriumMetricSceneAgentConfig)
@@ -749,7 +750,7 @@ class ArchitecturalWeldedEquilibriumMetricSceneAgent(BaseMetric):
         """Get object IDs for objects supported by architectural elements.
 
         Returns:
-            List of object IDs that are supported by floor, wall, or ceiling.
+            List of object IDs that are supported by wall, ceiling, or optionally floor.
         """
         support_type_file = self.scene.output_dir / "obj_support_type_result.json"
         if not support_type_file.exists():
@@ -758,9 +759,14 @@ class ArchitecturalWeldedEquilibriumMetricSceneAgent(BaseMetric):
         with open(support_type_file) as f:
             support_types = json.load(f)
 
+        # Build list of support types to weld (wall/ceiling always, floor optionally)
+        architectural_support_types = ["wall", "ceiling"]
+        if self.cfg.weld_floor_objects:
+            architectural_support_types.append("ground")
+
         return [
             obj_id for obj_id, support_type in support_types.items()
-            if support_type in ("ground", "wall", "ceiling")
+            if support_type in architectural_support_types
         ]
 
     def run(self, verbose: bool = False) -> MetricResult:
@@ -956,6 +962,7 @@ class CombinedWeldedEquilibriumMetricSceneAgentConfig:
     rotation_threshold: float = 0.1
     penetration_threshold: float = 0.001
     save_simulation_html: bool = True
+    weld_floor_objects: bool = False
 
 
 @register_non_vlm_metric(config_class=CombinedWeldedEquilibriumMetricSceneAgentConfig)
@@ -981,7 +988,7 @@ class CombinedWeldedEquilibriumMetricSceneAgent(BaseMetric):
         """Get object IDs for objects supported by architectural elements.
 
         Returns:
-            List of object IDs that are supported by floor, wall, or ceiling.
+            List of object IDs that are supported by wall, ceiling, or optionally floor.
         """
         support_type_file = self.scene.output_dir / "obj_support_type_result.json"
         if not support_type_file.exists():
@@ -990,9 +997,14 @@ class CombinedWeldedEquilibriumMetricSceneAgent(BaseMetric):
         with open(support_type_file) as f:
             support_types = json.load(f)
 
+        # Build list of support types to weld (wall/ceiling always, floor optionally)
+        architectural_support_types = ["wall", "ceiling"]
+        if self.cfg.weld_floor_objects:
+            architectural_support_types.append("ground")
+
         return [
             obj_id for obj_id, support_type in support_types.items()
-            if support_type in ("ground", "wall", "ceiling")
+            if support_type in architectural_support_types
         ]
 
     def run(self, verbose: bool = False) -> MetricResult:
