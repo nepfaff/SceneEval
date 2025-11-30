@@ -79,19 +79,19 @@ SCENE_STATE_JSON_BASE = {
 
 
 def apply_transforms_and_export_glb(src_glb_path: Path, dest_glb_path: Path) -> tuple:
-    """Load GLB, apply all internal transforms + Y-up to Z-up conversion, export clean GLB.
+    """Load GLB, apply internal transforms, center at origin, export clean GLB in Y-up.
 
-    This replicates IDesign's Blender workflow:
-        1. bpy.ops.import_scene.gltf() - imports with Y-up to Z-up conversion
-        2. bpy.ops.object.transform_apply() - bakes transforms into vertices
-        3. bpy.ops.object.origin_set(center='BOUNDS') - centers origin
+    IMPORTANT: We keep the GLB in Y-up format (glTF convention) so that Blender's
+    automatic Y-up to Z-up conversion works correctly. If we baked Z-up into vertices,
+    Blender would double-rotate the mesh.
 
     Args:
         src_glb_path: Source GLB file
         dest_glb_path: Destination path for cleaned GLB
 
     Returns:
-        Tuple of (x_extent, y_extent, z_extent) bounding box in Z-up coordinates.
+        Tuple of (x_extent, y_extent, z_extent) bounding box in Y-up coordinates.
+        In Y-up: X=width, Y=height(up), Z=depth
     """
     if not TRIMESH_AVAILABLE:
         return (1.0, 1.0, 1.0)
@@ -112,19 +112,20 @@ def apply_transforms_and_export_glb(src_glb_path: Path, dest_glb_path: Path) -> 
             mesh = trimesh.load(src_glb_path, force='mesh')
 
         if mesh is not None and hasattr(mesh, 'bounding_box'):
-            # Apply Y-up to Z-up conversion (like Blender's gltf importer does)
-            # Rotation of +90° around X: Y->Z, Z->-Y
-            y_up_to_z_up = trimesh.transformations.rotation_matrix(np.pi / 2, [1, 0, 0])
-            mesh.apply_transform(y_up_to_z_up)
+            # DO NOT apply Y-up to Z-up conversion here!
+            # Blender will do this automatically when importing GLB.
+            # If we bake it here, Blender double-rotates the mesh, causing
+            # incorrect orientations that depend on the object's Z rotation.
 
             # Center at origin (like IDesign's ORIGIN_GEOMETRY, center='BOUNDS')
             centroid = mesh.bounding_box.centroid
             mesh.vertices -= centroid
 
-            # Get bbox extents (now in Z-up coordinates)
+            # Get bbox extents in Y-up coordinates
+            # Y-up: X=width, Y=height(up), Z=depth
             extents = tuple(mesh.bounding_box.extents)
 
-            # Export the cleaned mesh
+            # Export the cleaned mesh (still in Y-up)
             mesh.export(dest_glb_path)
             return extents
 
@@ -139,37 +140,35 @@ def build_transform(
     position: dict,
     z_angle_degrees: float,
     size_in_meters: dict,
-    bbox_zup: tuple = None
+    bbox_yup: tuple = None
 ) -> dict:
     """Build 4x4 transform matrix with rotation, scale, and translation.
 
-    Following IDesign's Blender workflow:
-    1. GLB transforms are baked into vertices (apply_transforms_and_export_glb)
-    2. Object is positioned and rotated
-    3. Scale is computed from current bbox (already in Z-up)
-
     Args:
-        position: {"x": float, "y": float, "z": float}
+        position: {"x": float, "y": float, "z": float} in Z-up coords
         z_angle_degrees: Rotation around Z-axis in degrees
         size_in_meters: Target size {"length": X, "width": Y, "height": Z} in Z-up coords
-        bbox_zup: Bounding box extents (X, Y, Z) in Z-up coordinates (from apply_transforms_and_export_glb)
+        bbox_yup: Bounding box extents (X, Y, Z) in Y-up coordinates from GLB
+                  Y-up: X=width, Y=height(up), Z=depth
 
     Returns:
         SceneEval transform dict with data, rotation, scale, translation
     """
-    # bbox_zup is already in Z-up coords (transforms baked into GLB)
-    if bbox_zup is None:
-        bbox_zup = (1.0, 1.0, 1.0)
+    if bbox_yup is None:
+        bbox_yup = (1.0, 1.0, 1.0)
 
-    # Scale directly - bbox is already Z-up aligned
-    # length=X, width=Y, height=Z in both size_in_meters and bbox
-    scale_x = size_in_meters['length'] / bbox_zup[0] if bbox_zup[0] > 1e-6 else 1.0
-    scale_y = size_in_meters['width'] / bbox_zup[1] if bbox_zup[1] > 1e-6 else 1.0
-    scale_z = size_in_meters['height'] / bbox_zup[2] if bbox_zup[2] > 1e-6 else 1.0
+    # Map Y-up bbox to Z-up size_in_meters:
+    # Y-up: X=width, Y=height, Z=depth
+    # Z-up size_in_meters: length=X, width=Y, height=Z
+    # After Blender's Y-up to Z-up conversion: old_Y->new_Z, old_Z->new_-Y (but same magnitude)
+    # So in Z-up after import: X stays X, old_Y(height) becomes Z(height), old_Z(depth) becomes Y(width)
+    scale_x = size_in_meters['length'] / bbox_yup[0] if bbox_yup[0] > 1e-6 else 1.0  # X stays X
+    scale_y = size_in_meters['width'] / bbox_yup[2] if bbox_yup[2] > 1e-6 else 1.0   # Y-up Z(depth) -> Z-up Y(width)
+    scale_z = size_in_meters['height'] / bbox_yup[1] if bbox_yup[1] > 1e-6 else 1.0  # Y-up Y(height) -> Z-up Z(height)
 
-    # Rotation: use z_angle directly (no +180° offset needed since we bake Y-up to Z-up into GLB)
-    # The +180° was needed when the rotation was applied before Y-up to Z-up conversion
-    z_rad = math.radians(z_angle_degrees)
+    # Rotation: add +180° to match IDesign's place_in_blender.py
+    # IDesign adds +π to all z_angles when placing objects in Blender
+    z_rad = math.radians(z_angle_degrees) + math.pi
     cos_z = math.cos(z_rad)
     sin_z = math.sin(z_rad)
 
@@ -381,15 +380,16 @@ def convert_single_scene(
         if src_glb_path and not src_glb_path.exists():
             src_glb_path = None
 
-        # Process GLB: bake internal transforms into vertices and get Z-up bbox
-        bbox_zup = (1.0, 1.0, 1.0)
+        # Process GLB: center at origin and get Y-up bbox
+        # GLB stays in Y-up so Blender's automatic Y-up to Z-up conversion works correctly
+        bbox_yup = (1.0, 1.0, 1.0)
         dest_glb = assets_output_dir / f"{obj_id}.glb"
         if src_glb_path and src_glb_path.exists():
-            bbox_zup = apply_transforms_and_export_glb(src_glb_path, dest_glb)
+            bbox_yup = apply_transforms_and_export_glb(src_glb_path, dest_glb)
 
         # Build transform (rotation + scale + translation)
-        # bbox_zup is already in Z-up coords (transforms baked into GLB)
-        transform = build_transform(position, z_angle, size, bbox_zup)
+        # bbox_yup is in Y-up coords, build_transform maps to Z-up size
+        transform = build_transform(position, z_angle, size, bbox_yup)
 
         # Build description from style and material
         style = item.get('style', '')

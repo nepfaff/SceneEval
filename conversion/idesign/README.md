@@ -19,7 +19,24 @@ Drake metrics use on-the-fly SDF generation (same as LayoutVLM/SceneWeaver/HSM).
 
 ## Conversion
 
-### Usage
+### Recommended: Blender-based Conversion
+
+**IMPORTANT:** This script must be run with **Blender 4.2** (not 5.0+). There is an undocumented breaking change in `bpy.ops.transform.rotate` between Blender 4.2 and 5.0 that causes objects to be mirrored incorrectly.
+
+```bash
+# Convert all scenes using Blender 4.2 (recommended)
+/home/ubuntu/blender-4.2.0-linux-x64/blender --background --python conversion/idesign/convert_SceneEval_blender.py -- \
+    --source_dir /home/ubuntu/IDesign/data/scenes_batch \
+    --output_dir input/IDesign \
+    --mapping '{"0": 106, "1": 56, "2": 39, "3": 74, "4": 94}'
+```
+
+This Blender-based conversion:
+- Replicates IDesign's `place_in_blender.py` logic exactly
+- Exports each object with world transform baked into vertices
+- Stores identity transforms in JSON (like SceneWeaver approach)
+
+### Alternative: Python-only Conversion
 
 ```bash
 # Convert all scenes from IDesign scenes_batch directory
@@ -33,6 +50,8 @@ python conversion/idesign/convert_SceneEval.py \
     input/IDesign \
     --mapping '{"0": 106, "1": 56}'
 ```
+
+Note: The Python-only conversion may have slight differences from IDesign's reference due to coordinate system handling. The Blender-based conversion is recommended for exact replication.
 
 ### Input Structure (IDesign output)
 
