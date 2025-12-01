@@ -1469,13 +1469,16 @@ def _build_drake_directives_scene_agent(
             ]
         )
 
-        # Weld if requested.
+        # Weld if requested - include X_PC transform so object is welded at its pose.
         if obj_id in weld_to_world:
             lines.extend(
                 [
                     "- add_weld:",
                     '    parent: "world"',
                     f'    child: "{model_name}::base_link"',
+                    "    X_PC:",
+                    f"      translation: [{translation[0]:.6f}, {translation[1]:.6f}, {translation[2]:.6f}]",
+                    f"      rotation: !Rpy {{ deg: [{rpy_deg[0]:.6f}, {rpy_deg[1]:.6f}, {rpy_deg[2]:.6f}] }}",
                 ]
             )
 

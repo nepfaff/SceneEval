@@ -21,6 +21,7 @@
 # FILE TYPES INCLUDED:
 #   - *.blend  (Blender scene files)
 #   - *.png    (PNG image files)
+#   - *.html   (HTML meshcat simulation files)
 
 SOURCE_DIR="/home/ubuntu/SceneEval/output_eval"
 OUTPUT_ZIP="${1:-/home/ubuntu/SceneEval/output_eval.zip}"
@@ -31,6 +32,6 @@ if [ ! -d "$SOURCE_DIR" ]; then
 fi
 
 cd /home/ubuntu/SceneEval
-zip -r "$OUTPUT_ZIP" output_eval -i "*.png" -i "*.blend"
+zip -r "$OUTPUT_ZIP" output_eval -i "*.png" -i "*.blend" -i "*.html"
 
 echo "Created: $OUTPUT_ZIP"

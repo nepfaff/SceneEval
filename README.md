@@ -549,6 +549,90 @@ All scripts produce:
 This approach runs completely independent Python processes, avoiding any issues with Blender's `bpy` module or Drake's Meshcat in multi-threaded environments.
 
 
+## Utility Scripts
+
+SceneEval includes utility scripts for exporting and summarizing evaluation results.
+
+### Zip Output Script (`scripts/zip_output_eval.sh`)
+
+Creates a selective zip archive of `output_eval/` containing only `.blend` and `.png` files while preserving the full directory structure. Useful for sharing evaluation visualizations without the large JSON files.
+
+```bash
+# Create output_eval.zip in project root (default)
+./scripts/zip_output_eval.sh
+
+# Create zip at custom location
+./scripts/zip_output_eval.sh /path/to/custom_output.zip
+```
+
+**Output:**
+- Archive contains all `.blend` scene files and `.png` renders/visualizations
+- Full directory structure preserved (e.g., `output_eval/LayoutVLM/scene_56/scene.png`)
+
+### Metric Summary CSV Script (`scripts/generate_metric_csv.py`)
+
+Generates a comprehensive CSV summary of all evaluation metrics across methods and scenes.
+
+```bash
+python scripts/generate_metric_csv.py
+```
+
+**Output:** `output_eval/metric_summary.csv`
+
+**Features:**
+- Rows: method + scene combinations with averages per method
+- Columns: All metric values including computed fractions
+- Empty row separators between methods for readability
+- Handles SceneAgent-specific metrics (DCS, AWS, CWS variants)
+
+**Sample columns:**
+| Column | Description |
+|--------|-------------|
+| `num_objects` | Total objects in scene |
+| `CollisionMetric.num_obj_in_collision` | Objects in collision |
+| `CollisionMetric.frac_obj_in_collision` | Fraction of objects in collision |
+| `NavigabilityMetric.navigability` | Floor navigability score |
+| `*WeldedEquilibriumMetric*.frac_unstable_objects` | Fraction of unstable objects (over simulated) |
+
+### Metric Table Script (`scripts/generate_metric_table.py`)
+
+Generates formatted tables (Markdown and PNG) comparing methods across key metrics. Includes automatic ranking with **bold** for best and *italic* for 2nd best.
+
+```bash
+python scripts/generate_metric_table.py
+```
+
+**Output:**
+- `output_eval/metric_table.md` - Markdown table with legend
+- `output_eval/metric_table.png` - Matplotlib figure with color-coded rankings
+
+**Configuration:** Edit `METRIC_CONFIG` at the top of the script to:
+- Add/remove metrics
+- Change 3-letter acronyms
+- Modify metric groupings (metrics in the same group are compared together for ranking)
+
+**Metric Groups (compared together for ranking):**
+| Group | Metrics | Description |
+|-------|---------|-------------|
+| DC | DCC, DCV, DCS | Drake Collision variants |
+| AW | AWC, AWV, AWS | Architectural Welded Equilibrium variants |
+| CW | CWC, CWV, CWS | Combined Welded Equilibrium variants |
+
+**Example Output:**
+
+| Method | COL | NAV | OOB | DCC | DCV | DCS | AWC | AWV | AWS | CWC | CWV | CWS |
+|:---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| HSM | 33.46% | **100.00%** | 7.45% | 58.85% | 51.60% | - | 84.04% | 65.51% | - | 75.00% | **35.83%** | - |
+| Ours | **0.00%** | 100.00% | 0.00% | - | - | **0.00%** | - | - | **18.96%** | - | - | 66.36% |
+
+**Legend:**
+- **COL**: Object Collision Rate
+- **NAV**: Scene Navigability
+- **DCC/DCV/DCS**: Drake Collision (CoACD/VHACD/Ours)
+- **AWC/AWV/AWS**: Architectural Equilibrium variants
+- **CWC/CWV/CWS**: Combined Equilibrium variants
+
+
 ## Acknowledgements
 This work was funded in part by the Sony Research Award Program, a CIFAR AI Chair, a Canada Research Chair, NSERC Discovery Grants, and enabled by support from the [Digital Research Alliance of Canada](https://alliancecan.ca/).
 We thank Nao Yamato, Yotaro Shimose, and other members on the Sony team for their feedback.
