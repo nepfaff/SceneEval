@@ -3,6 +3,7 @@ import logging
 import random
 import pathlib
 import shutil
+import traceback
 import hydra
 import json
 import numpy as np
@@ -639,13 +640,24 @@ def main(cfg: DictConfig) -> None:
                 for metric_name in metrics_to_run:
                     log_memory(f"Before metric {metric_name}")
                     print(f"----- Running metric: {metric_name}")
-                    metric_instance = MetricRegistry.instantiate_metric(metric_name, metric_configs, **common_metric_params)
+                    try:
+                        metric_instance = MetricRegistry.instantiate_metric(metric_name, metric_configs, **common_metric_params)
 
-                    result = metric_instance.run(evaluation_plan.evaluation_cfg.verbose)
-                    output_json["results"][metric_name] = {
-                        "message": result.message,
-                        "data": result.data
-                    }
+                        result = metric_instance.run(evaluation_plan.evaluation_cfg.verbose)
+                        output_json["results"][metric_name] = {
+                            "message": result.message,
+                            "data": result.data
+                        }
+                    except Exception as e:
+                        # Catch errors (e.g., GJK numerical precision, collision detection issues)
+                        # and continue to next metric instead of failing entire run
+                        error_msg = f"Metric {metric_name} failed with error: {e}"
+                        print(f"ERROR: {error_msg}")
+                        traceback.print_exc()
+                        output_json["results"][metric_name] = {
+                            "message": error_msg,
+                            "data": {"error": str(e), "traceback": traceback.format_exc()}
+                        }
 
                     log_memory(f"After metric {metric_name}")
 
