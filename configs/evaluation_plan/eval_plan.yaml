@@ -14,14 +14,12 @@ evaluation_cfg:
     - OpeningClearanceMetric
     # Drake physics metrics (CoACD):
     - DrakeCollisionMetricCoACD
-    # Drake physics metrics (VHACD):
-    - DrakeCollisionMetricVHACD
-    # - StaticEquilibriumMetricVHACD
-    # - WeldedEquilibriumMetricVHACD
     # Architectural welded equilibrium (welds floor/wall/ceiling, objects move freely):
     - ArchitecturalWeldedEquilibriumMetricCoACD
-    - ArchitecturalWeldedEquilibriumMetricVHACD
     - CombinedWeldedEquilibriumMetricCoACD
+    # Run VHACD metrics in the end as they have a higher chance of crashing
+    - DrakeCollisionMetricVHACD
+    - ArchitecturalWeldedEquilibriumMetricVHACD
     - CombinedWeldedEquilibriumMetricVHACD
   output_dir: ./output_eval
   save_blend_file: True

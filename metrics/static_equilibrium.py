@@ -153,6 +153,7 @@ class StaticEquilibriumMetricBase(BaseMetric):
 
         # Get coacd_threshold if applicable.
         coacd_threshold = getattr(self.cfg, "coacd_threshold", 0.05)
+        vhacd_max_convex_hulls = getattr(self.cfg, "vhacd_max_convex_hulls", 64)
 
         # Get hydroelastic_modulus if applicable.
         hydroelastic_modulus = getattr(self.cfg, "hydroelastic_modulus", None)
@@ -167,6 +168,7 @@ class StaticEquilibriumMetricBase(BaseMetric):
                 temp_dir=drake_scene_dir / "simulation",
                 weld_to_world=objects_to_weld,
                 coacd_threshold=coacd_threshold,
+                vhacd_max_convex_hulls=vhacd_max_convex_hulls,
                 decomposition_method=self.decomposition_method,
                 hydroelastic_modulus=use_hydroelastic_modulus,
             )

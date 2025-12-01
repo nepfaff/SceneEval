@@ -177,12 +177,13 @@ def generate_collision_geometry(
 
 
 def generate_collision_geometry_vhacd(
-    mesh: trimesh.Trimesh, **kwargs
+    mesh: trimesh.Trimesh, max_convex_hulls: int = 32, **kwargs
 ) -> list[trimesh.Trimesh]:
     """Generate convex decomposition collision geometry using VHACD.
 
     Args:
         mesh: Input mesh to decompose.
+        max_convex_hulls: Maximum number of convex hulls to generate (default 32).
         **kwargs: Additional kwargs passed to trimesh.convex_decomposition().
 
     Returns:
@@ -195,7 +196,9 @@ def generate_collision_geometry_vhacd(
         start_time = time.time()
 
         # Use trimesh's convex_decomposition which uses vhacdx.
-        convex_pieces = mesh.convex_decomposition(**kwargs)
+        convex_pieces = mesh.convex_decomposition(
+            maxConvexHulls=max_convex_hulls, **kwargs
+        )
 
         # Ensure result is a list.
         if not isinstance(convex_pieces, list):
@@ -441,6 +444,7 @@ def generate_sdf_from_trimesh(
     name: str,
     mass: float = 1.0,
     coacd_threshold: float = 0.05,
+    vhacd_max_convex_hulls: int = 64,
     decomposition_method: Literal["coacd", "vhacd"] = "coacd",
     hydroelastic_modulus: float | None = None,
     hunt_crossley_dissipation: float | None = None,
@@ -462,6 +466,7 @@ def generate_sdf_from_trimesh(
         name: Name for the asset (used in filenames and model name).
         mass: Mass in kg (default 1.0).
         coacd_threshold: CoACD approximation threshold (only used for coacd).
+        vhacd_max_convex_hulls: Maximum number of convex hulls for VHACD (default 64).
         decomposition_method: Convex decomposition method ("coacd" or "vhacd").
         hydroelastic_modulus: If set, adds compliant hydroelastic properties
             with this modulus (Pa). If None, no hydroelastic properties are added.
@@ -477,7 +482,9 @@ def generate_sdf_from_trimesh(
 
     # Generate collision geometry using specified method.
     if decomposition_method == "vhacd":
-        collision_pieces = generate_collision_geometry_vhacd(mesh)
+        collision_pieces = generate_collision_geometry_vhacd(
+            mesh, max_convex_hulls=vhacd_max_convex_hulls
+        )
     else:
         collision_pieces = generate_collision_geometry(mesh, threshold=coacd_threshold)
 
@@ -719,6 +726,7 @@ def create_drake_plant_from_scene(
     weld_to_world: list[str] | None = None,
     mass: float = 1.0,
     coacd_threshold: float = 0.05,
+    vhacd_max_convex_hulls: int = 64,
     decomposition_method: Literal["coacd", "vhacd"] = "coacd",
     hydroelastic_modulus: float | None = None,
     hunt_crossley_dissipation: float | None = None,
@@ -738,6 +746,7 @@ def create_drake_plant_from_scene(
         weld_to_world: List of object IDs to weld to world (make static).
         mass: Mass in kg for all objects (default 1.0).
         coacd_threshold: CoACD approximation threshold (only used for coacd).
+        vhacd_max_convex_hulls: Maximum number of convex hulls for VHACD (default 64).
         decomposition_method: Convex decomposition method ("coacd" or "vhacd").
         hydroelastic_modulus: If set, adds compliant hydroelastic properties
             with this modulus (Pa). If None, no hydroelastic properties are added.
@@ -794,6 +803,7 @@ def create_drake_plant_from_scene(
                 name=model_name,
                 mass=mass,
                 coacd_threshold=coacd_threshold,
+                vhacd_max_convex_hulls=vhacd_max_convex_hulls,
                 decomposition_method=decomposition_method,
                 hydroelastic_modulus=hydroelastic_modulus,
                 hunt_crossley_dissipation=hunt_crossley_dissipation,
@@ -969,35 +979,37 @@ def detect_penetrating_pairs(
 
     console_logger.info(f"Found {len(collision_geometry_ids)} collision geometries")
 
-    # Check all pairs.
+    # Use ComputeSignedDistancePairwiseClosestPoints with max_distance=0 to get
+    # only penetrating pairs. This uses broadphase culling internally and is more
+    # efficient than FindCollisionCandidates + individual pair queries.
+    all_pairs = query_object.ComputeSignedDistancePairwiseClosestPoints(
+        max_distance=0.0
+    )
+    console_logger.info(
+        f"Found {len(all_pairs)} penetrating geometry pairs from pairwise query"
+    )
+
+    # Filter pairs by threshold and map to object IDs.
     penetrating_pairs = []
-    for i, gid_a in enumerate(collision_geometry_ids):
-        for gid_b in collision_geometry_ids[i + 1 :]:
-            try:
-                distance_result = query_object.ComputeSignedDistancePairClosestPoints(
-                    geometry_id_A=gid_a, geometry_id_B=gid_b
-                )
+    for pair in all_pairs:
+        # pair.distance is already computed (negative for penetration)
+        if pair.distance < -threshold:
+            # Map geometry IDs to object IDs.
+            frame_a = inspector.GetFrameId(pair.id_A)
+            frame_b = inspector.GetFrameId(pair.id_B)
+            name_a = inspector.GetName(frame_a).split("::")[0]
+            name_b = inspector.GetName(frame_b).split("::")[0]
 
-                if distance_result.distance < -threshold:
-                    # Map geometry IDs to object IDs.
-                    frame_a = inspector.GetFrameId(gid_a)
-                    frame_b = inspector.GetFrameId(gid_b)
-                    name_a = inspector.GetName(frame_a).split("::")[0]
-                    name_b = inspector.GetName(frame_b).split("::")[0]
+            # Convert model names to object IDs.
+            obj_a = model_name_to_obj_id.get(name_a, name_a)
+            obj_b = model_name_to_obj_id.get(name_b, name_b)
 
-                    # Convert model names to object IDs.
-                    obj_a = model_name_to_obj_id.get(name_a, name_a)
-                    obj_b = model_name_to_obj_id.get(name_b, name_b)
+            # Skip self-collisions (different convex pieces of same object).
+            if obj_a == obj_b:
+                continue
 
-                    # Skip self-collisions (different CoACD pieces of same object).
-                    if obj_a == obj_b:
-                        continue
-
-                    penetration_depth = abs(distance_result.distance)
-                    penetrating_pairs.append((obj_a, obj_b, penetration_depth))
-
-            except Exception as e:
-                console_logger.info(f"Collision check failed for geometry pair: {e}")
+            penetration_depth = abs(pair.distance)
+            penetrating_pairs.append((obj_a, obj_b, penetration_depth))
 
     # Deduplicate pairs.
     seen = set()

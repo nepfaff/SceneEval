@@ -82,6 +82,7 @@ class DrakeCollisionMetricBase(BaseMetric):
 
         # Get coacd_threshold if applicable.
         coacd_threshold = getattr(self.cfg, "coacd_threshold", 0.05)
+        vhacd_max_convex_hulls = getattr(self.cfg, "vhacd_max_convex_hulls", 64)
 
         # Create Drake plant (time_step=0 for static collision query).
         builder, plant, scene_graph, obj_id_to_model_name = create_drake_plant_from_scene(
@@ -90,6 +91,7 @@ class DrakeCollisionMetricBase(BaseMetric):
             temp_dir=drake_scene_dir,
             weld_to_world=[],
             coacd_threshold=coacd_threshold,
+            vhacd_max_convex_hulls=vhacd_max_convex_hulls,
             decomposition_method=self.decomposition_method,
         )
 

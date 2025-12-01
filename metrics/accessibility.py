@@ -312,12 +312,16 @@ class AccessibilityMetric(BaseMetric):
         floor_mask = self._get_floor_mask(verbose=verbose)
 
         # Compute the accessibility score for each object for each functional side
+        VALID_SIDES = {"front", "back", "left", "right"}
         accessibility_scores = {}
         for assessment in response.assessments:
             obj_id = assessment.obj_id
             accessibility_scores[obj_id] = {}
 
             for side in assessment.functional_sides:
+                if side not in VALID_SIDES:
+                    warn(f"Invalid functional side '{side}' for {obj_id}, defaulting to 'front'", RuntimeWarning)
+                    side = "front"
                 accessibility_scores[obj_id][side] = self._get_accessibility_score(floor_mask, obj_id, side, verbose=verbose)
         
         # Compute the maximum accessibility score for each object
