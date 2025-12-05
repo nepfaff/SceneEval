@@ -1414,8 +1414,9 @@ def _build_drake_directives_scene_agent(
     # Ensure absolute path for Drake URIs.
     temp_dir = Path(temp_dir).resolve()
 
-    # Parse floor_plan.sdf to get the link name.
+    # Parse floor_plan.sdf to get the link name and check if static.
     floor_plan_link_name = "base_link"  # Default fallback.
+    floor_plan_is_static = False
     if floor_plan_sdf_path and floor_plan_sdf_path.exists():
         try:
             tree = ET.parse(floor_plan_sdf_path)
@@ -1426,22 +1427,34 @@ def _build_drake_directives_scene_agent(
                 if link_name:
                     floor_plan_link_name = link_name
                     break
+            # Check if model is static (Drake auto-welds static models).
+            for static_elem in root.iter("static"):
+                if static_elem.text and static_elem.text.strip().lower() == "true":
+                    floor_plan_is_static = True
+                    break
         except ET.ParseError:
             pass
 
     lines = ["directives:"]
 
-    # Add floor plan (always welded to world - it's static architecture).
+    # Add floor plan.
     lines.extend(
         [
             "- add_model:",
             f'    name: "floor_plan"',
             f'    file: "file://{temp_dir}/floor_plan.sdf"',
-            "- add_weld:",
-            '    parent: "world"',
-            f'    child: "floor_plan::{floor_plan_link_name}"',
         ]
     )
+    # Only add explicit weld if floor_plan is not already static.
+    # Static models in Drake are auto-welded to world.
+    if not floor_plan_is_static:
+        lines.extend(
+            [
+                "- add_weld:",
+                '    parent: "world"',
+                f'    child: "floor_plan::{floor_plan_link_name}"',
+            ]
+        )
 
     # Add each object with its transform.
     for obj_id, model_name in obj_id_to_model_name.items():
