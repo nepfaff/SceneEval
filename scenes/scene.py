@@ -88,7 +88,29 @@ class Scene:
         """
 
         return self.trimesh_scene.t_architecture
-    
+
+    @property
+    def carpet_obj_ids(self) -> set[str]:
+        """
+        Returns:
+            Set of object IDs that are carpets/rugs (excluded from collision checks)
+        """
+
+        return self.trimesh_scene.carpet_obj_ids
+
+    def is_carpet(self, obj_id: str) -> bool:
+        """
+        Check if an object is a carpet/rug.
+
+        Args:
+            obj_id: the object ID
+
+        Returns:
+            True if the object is a carpet/rug
+        """
+
+        return obj_id in self.carpet_obj_ids
+
     def get_obj_ids(self) -> list[str]:
         """
         Get the object IDs in the scene.

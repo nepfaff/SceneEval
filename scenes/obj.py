@@ -15,6 +15,7 @@ class Obj:
         self.parentIndex: int = None
         self.holodeck_type: str = None
         self.holodeck_support_parent: int = None
+        self.sdf_path: str = None  # Path to SDF file (for SceneAgent collision detection)
     
         # Load the object dictionary if provided
         if obj_dict is not None:
@@ -37,6 +38,7 @@ class Obj:
         self.parentIndex = obj_dict.get("parentIndex", None)
         self.holodeck_type = obj_dict.get("holodeckType", None)
         self.holodeck_support_parent = obj_dict.get("holodeckSupportParent", None)
+        self.sdf_path = obj_dict.get("sdfPath", None)
 
 class _Transform:
     def __init__(self, transform_dict: dict = None) -> None:

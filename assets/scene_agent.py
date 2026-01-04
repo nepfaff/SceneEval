@@ -96,7 +96,8 @@ class SceneAgentAssetDataset(BaseAssetDataset):
                     asset_id=asset_id,
                     file_path=gltf_path,
                     description=f"{obj_id} (scene-agent)",
-                    extra_rotation_transform=None
+                    extra_rotation_transform=None,
+                    sdf_path=sdf_path
                 )
 
         raise FileNotFoundError(

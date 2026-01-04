@@ -108,23 +108,33 @@ class DrakeCollisionMetricBase(BaseMetric):
             obj_id_to_model_name=obj_id_to_model_name,
         )
 
-        # Build collision results for object-object collisions.
+        # Get non-carpet object IDs (carpets are excluded from collision checks)
+        carpet_ids = self.scene.carpet_obj_ids if hasattr(self.scene, 'carpet_obj_ids') else set()
+        non_carpet_obj_ids = [
+            obj_id for obj_id in self.scene.get_obj_ids()
+            if obj_id not in carpet_ids
+        ]
+
+        if carpet_ids:
+            print(f"Excluding {len(carpet_ids)} carpet object(s) from Drake collision check: {list(carpet_ids)}")
+
+        # Build collision results for object-object collisions (only non-carpet objects).
         collision_results = {
             obj_id: {
                 "in_collision": False,
                 "colliding_with": [],
                 "collision_details": [],
             }
-            for obj_id in self.scene.get_obj_ids()
+            for obj_id in non_carpet_obj_ids
         }
 
-        # Build floor collision results separately.
+        # Build floor collision results separately (only non-carpet objects).
         floor_collision_results = {
             obj_id: {
                 "in_collision_with_floor": False,
                 "penetration_depth": 0.0,
             }
-            for obj_id in self.scene.get_obj_ids()
+            for obj_id in non_carpet_obj_ids
         }
 
         # Process penetrating pairs.
@@ -204,10 +214,11 @@ class DrakeCollisionMetricBase(BaseMetric):
         result = MetricResult(
             message=(
                 f"Drake collision ({method_name}): scene_in_collision={scene_in_collision}, "
-                f"{num_obj_in_collision}/{len(self.scene.get_obj_ids())} objects in collision, "
+                f"{num_obj_in_collision}/{len(non_carpet_obj_ids)} objects in collision, "
                 f"{num_collision_pairs} collision pairs, "
                 f"max_depth={max_penetration_depth:.4f}m; "
-                f"floor_collisions={num_obj_in_floor_collision}"
+                f"floor_collisions={num_obj_in_floor_collision} "
+                f"({len(carpet_ids)} carpets excluded)"
             ),
             data={
                 # Object-object collision stats.
@@ -226,6 +237,9 @@ class DrakeCollisionMetricBase(BaseMetric):
                 "floor_collision_results": floor_collision_results,
                 # Decomposition method used.
                 "decomposition_method": self.decomposition_method,
+                # Excluded carpets.
+                "excluded_carpet_ids": list(carpet_ids),
+                "num_excluded_carpets": len(carpet_ids),
             },
         )
 

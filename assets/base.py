@@ -28,12 +28,14 @@ class AssetInfo:
         file_path: the path to the asset file
         description: a description of the asset
         extra_rotation_transform: an optional rotation transform matrix applied to the asset
+        sdf_path: optional path to SDF file (for SceneAgent collision detection)
     """
 
     asset_id: str
     file_path: Path
     description: str
     extra_rotation_transform: np.ndarray | None = None
+    sdf_path: Path | None = None
 
 class BaseAssetDataset(ABC):
     """

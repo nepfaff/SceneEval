@@ -777,6 +777,11 @@ def create_drake_plant_from_scene(
         obj_ids = scene.get_obj_ids()
         obj_id_to_model_name = {}
 
+        # Get carpet object IDs to exclude from physics simulation
+        carpet_ids = scene.carpet_obj_ids if hasattr(scene, 'carpet_obj_ids') else set()
+        if carpet_ids:
+            console_logger.info(f"Excluding {len(carpet_ids)} carpet(s) from Drake plant: {list(carpet_ids)}")
+
         for obj_id in obj_ids:
             # Skip architecture objects (floor, walls) - they're handled separately.
             if (
@@ -785,6 +790,11 @@ def create_drake_plant_from_scene(
                 or "wall" in obj_id.lower()
             ):
                 console_logger.info(f"Skipping architecture object: {obj_id}")
+                continue
+
+            # Skip carpet objects - they don't need collision geometry
+            if obj_id in carpet_ids:
+                console_logger.info(f"Skipping carpet object: {obj_id}")
                 continue
 
             # Get mesh in world coordinates (already transformed in TrimeshScene).

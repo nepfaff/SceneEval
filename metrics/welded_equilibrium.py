@@ -125,6 +125,11 @@ class WeldedEquilibriumMetricBase(BaseMetric):
         drake_scene_dir = self.output_dir / self.drake_scene_folder
         drake_scene_dir.mkdir(parents=True, exist_ok=True)
 
+        # Get carpet object IDs to exclude from results
+        carpet_ids = self.scene.carpet_obj_ids if hasattr(self.scene, 'carpet_obj_ids') else set()
+        if carpet_ids:
+            print(f"Excluding {len(carpet_ids)} carpet object(s) from equilibrium check: {list(carpet_ids)}")
+
         # Get coacd_threshold if applicable.
         coacd_threshold = getattr(self.cfg, "coacd_threshold", 0.05)
         vhacd_max_convex_hulls = getattr(self.cfg, "vhacd_max_convex_hulls", 64)
@@ -319,7 +324,8 @@ class WeldedEquilibriumMetricBase(BaseMetric):
                 f"{num_stable}/{num_non_welded} stable (non-welded) objects, "
                 f"{len(objects_to_weld)} welded objects, "
                 f"mean_displacement={mean_displacement:.4f}m, "
-                f"max_displacement={max_displacement:.4f}m"
+                f"max_displacement={max_displacement:.4f}m "
+                f"({len(carpet_ids)} carpets excluded)"
             ),
             data={
                 "scene_stable": scene_stable,
@@ -337,6 +343,9 @@ class WeldedEquilibriumMetricBase(BaseMetric):
                 "num_penetrating_pairs": len(penetrating_pairs_info),
                 # Decomposition method used.
                 "decomposition_method": self.decomposition_method,
+                # Excluded carpets.
+                "excluded_carpet_ids": list(carpet_ids),
+                "num_excluded_carpets": len(carpet_ids),
             },
         )
 

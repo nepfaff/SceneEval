@@ -144,6 +144,11 @@ class StaticEquilibriumMetricBase(BaseMetric):
         drake_scene_dir = self.output_dir / self.drake_scene_folder
         drake_scene_dir.mkdir(parents=True, exist_ok=True)
 
+        # Get carpet object IDs to exclude from results
+        carpet_ids = self.scene.carpet_obj_ids if hasattr(self.scene, 'carpet_obj_ids') else set()
+        if carpet_ids:
+            print(f"Excluding {len(carpet_ids)} carpet object(s) from equilibrium check: {list(carpet_ids)}")
+
         # Get wall/ceiling objects to weld (if enabled).
         objects_to_weld = []
         if self.cfg.weld_wall_ceiling_objects:
@@ -298,7 +303,8 @@ class StaticEquilibriumMetricBase(BaseMetric):
                 f"{num_stable}/{num_non_welded} stable (non-welded) objects, "
                 f"{len(objects_to_weld)} welded (wall/ceiling), "
                 f"mean_displacement={mean_displacement:.4f}m, "
-                f"max_displacement={max_displacement:.4f}m"
+                f"max_displacement={max_displacement:.4f}m "
+                f"({len(carpet_ids)} carpets excluded)"
             ),
             data={
                 "scene_stable": scene_stable,
@@ -314,6 +320,9 @@ class StaticEquilibriumMetricBase(BaseMetric):
                 "num_welded_objects": len(objects_to_weld),
                 # Decomposition method used.
                 "decomposition_method": self.decomposition_method,
+                # Excluded carpets.
+                "excluded_carpet_ids": list(carpet_ids),
+                "num_excluded_carpets": len(carpet_ids),
             },
         )
 

@@ -44,31 +44,41 @@ class CollisionMetric(BaseMetric):
 
         Args:
             verbose: whether to visualize during the run
-        
+
         Returns:
             result: the result of running the metric
         """
-        
+
         collision_manager = trimesh.collision.CollisionManager()
-        
-        # Initialize the collision results
+
+        # Get non-carpet object IDs (carpets are excluded from collision checks)
+        carpet_ids = self.scene.carpet_obj_ids
+        non_carpet_obj_ids = [
+            obj_id for obj_id in self.scene.get_obj_ids()
+            if obj_id not in carpet_ids
+        ]
+
+        if carpet_ids:
+            print(f"Excluding {len(carpet_ids)} carpet object(s) from collision check: {list(carpet_ids)}")
+
+        # Initialize the collision results (only for non-carpet objects)
         collision_results = {
             obj_id: {
                 "in_collision": False,
                 "colliding_with": [],
                 "collision_details": []  # Store depth/contact info per collision
             }
-        for obj_id in self.scene.get_obj_ids()}
-        
+        for obj_id in non_carpet_obj_ids}
+
         # For each object, check if it is in collision with any other object
-        for i, obj_id in enumerate(self.scene.get_obj_ids()):
+        for i, obj_id in enumerate(non_carpet_obj_ids):
             
             # Add the object to the collision manager
             t_obj = self.scene.t_objs[obj_id]
             collision_manager.add_object(obj_id, t_obj)
             
             # Check for collision with each of the other objects
-            for other_obj_id in self.scene.get_obj_ids()[i+1:]:
+            for other_obj_id in non_carpet_obj_ids[i+1:]:
                 
                 # Add the other object to the collision manager and check for collision
                 t_other_obj = self.scene.t_objs[other_obj_id]
@@ -150,7 +160,7 @@ class CollisionMetric(BaseMetric):
         overall_mean_depth = float(np.mean(all_max_depths)) if all_max_depths else 0.0
 
         result = MetricResult(
-            message=f"Scene is in collision: {scene_in_collision}, with {num_obj_in_collision}/{len(self.scene.get_obj_ids())} objects in collision. Max depth: {overall_max_depth:.4f}m, {num_collision_pairs} collision pairs.",
+            message=f"Scene is in collision: {scene_in_collision}, with {num_obj_in_collision}/{len(non_carpet_obj_ids)} objects in collision. Max depth: {overall_max_depth:.4f}m, {num_collision_pairs} collision pairs. ({len(carpet_ids)} carpets excluded)",
             data={
                 "scene_in_collision": scene_in_collision,
                 "num_obj_in_collision": num_obj_in_collision,
@@ -158,7 +168,9 @@ class CollisionMetric(BaseMetric):
                 "max_penetration_depth": overall_max_depth,
                 "mean_penetration_depth": overall_mean_depth,
                 "total_contact_points": total_contact_points,
-                "collision_results": collision_results
+                "collision_results": collision_results,
+                "excluded_carpet_ids": list(carpet_ids),
+                "num_excluded_carpets": len(carpet_ids),
             }
         )
 

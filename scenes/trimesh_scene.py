@@ -12,6 +12,7 @@ from .config import SceneConfig
 from .obj import Obj
 from .architecture import Architecture
 from assets import Retriever
+from utils.carpet_detection import is_carpet_object
 
 # NOTE: prefix t_ for Trimesh related objects
 
@@ -56,6 +57,7 @@ class TrimeshScene:
         self.obj_descriptions: dict[str, str] = {}
         self.inverse_obj_descriptions: dict[str, str] = {}
         self.t_architecture: dict[str, trimesh.Trimesh] = {}
+        self.carpet_obj_ids: set[str] = set()  # Track carpet/rug objects
 
         # Load the scene state
         if self.scene_state is not None:
@@ -143,6 +145,12 @@ class TrimeshScene:
         # Rename the object for identification and add it to the scene
         obj_name = f"idx{obj.index}_{obj.model_id}"
         self.t_objs[obj_name] = mesh
+
+        # Check if this object is a carpet/rug (or thin covering for SceneAgent)
+        sdf_path = asset_info.sdf_path if hasattr(asset_info, 'sdf_path') else None
+        if is_carpet_object(obj_name, obj_description, sdf_path=sdf_path):
+            self.carpet_obj_ids.add(obj_name)
+            logger.info(f"Detected carpet/thin-covering object: {obj_name}")
 
         # Adjust the object description to be explicit about duplicates
         same_obj_description_count = sum([1 for desc in self.obj_descriptions.values() if desc.startswith(obj_description)])
