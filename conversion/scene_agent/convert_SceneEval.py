@@ -162,7 +162,7 @@ def convert_single_scene(scene_dir: Path, target_dir: Path, scene_id: int) -> No
 
     # Copy generated_assets from all found directories
     for assets_path in assets_paths:
-        for category in ["furniture", "manipulands", "wall_mounted", "ceiling_mounted"]:
+        for category in ["furniture", "manipuland", "wall_mounted", "ceiling_mounted"]:
             category_src = assets_path / category
             if category_src.exists():
                 category_dst = assets_output_dir / category

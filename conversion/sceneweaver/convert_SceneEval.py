@@ -390,6 +390,139 @@ def find_all_spawn_asset_objects() -> list[bpy.types.Object]:
     return spawn_asset_objects
 
 
+def extract_factory_seed_from_layout_key(layout_key: str) -> str | None:
+    """
+    Extract factory seed from layout JSON key.
+
+    Layout keys have format: {seed}_{type} or {seed}_{FactoryType}
+    Examples:
+        '3870135_double_bed' -> '3870135'
+        '9273535_DeskLampFactory' -> '9273535'
+        '250493_book' -> '250493'
+
+    Args:
+        layout_key: Key from layout.json objects dict
+
+    Returns:
+        Factory seed string, or None if not parseable
+    """
+    parts = layout_key.split("_")
+    if parts and parts[0].isdigit():
+        return parts[0]
+    return None
+
+
+def extract_factory_seed_from_blender_name(obj_name: str) -> str | None:
+    """
+    Extract factory seed from Blender object name.
+
+    Blender names have format: {FactoryType}({seed}).spawn_asset({seed2})
+    Examples:
+        'BedFactory(3870135).spawn_asset(7191960)' -> '3870135'
+        'MattressFactory(3870135).spawn_asset(7191960)' -> '3870135'
+        'ObjaverseCategoryFactory(1210932).spawn_asset(7874330)' -> '1210932'
+
+    Args:
+        obj_name: Blender object name
+
+    Returns:
+        Factory seed string, or None if not parseable
+    """
+    paren_idx = obj_name.find("(")
+    if paren_idx < 0:
+        return None
+
+    seed_end = obj_name.find(")", paren_idx)
+    if seed_end < 0:
+        return None
+
+    seed = obj_name[paren_idx + 1:seed_end]
+    if seed.isdigit():
+        return seed
+    return None
+
+
+def group_blender_objects_by_factory_seed() -> dict[str, list[bpy.types.Object]]:
+    """
+    Group all spawn_asset objects by their factory seed.
+
+    Objects from the same composite factory share the same seed.
+    E.g., BedFactory(123), MattressFactory(123), PillowFactory(123) -> grouped under '123'
+
+    Returns:
+        Dict mapping factory seed to list of Blender objects
+    """
+    seed_groups = {}
+
+    for obj in bpy.data.objects:
+        # Skip non-mesh objects
+        if obj.type != 'MESH':
+            continue
+
+        # Only include spawn_asset objects
+        if '.spawn_asset(' not in obj.name:
+            continue
+
+        # Skip hidden/asset collections
+        if is_in_hidden_or_asset_collection(obj):
+            continue
+
+        # Validate object has actual geometry
+        if obj.data is None or len(obj.data.vertices) == 0:
+            continue
+
+        seed = extract_factory_seed_from_blender_name(obj.name)
+        if seed:
+            if seed not in seed_groups:
+                seed_groups[seed] = []
+            seed_groups[seed].append(obj)
+
+    return seed_groups
+
+
+def export_composite_as_glb(objects: list[bpy.types.Object], output_path: Path) -> bool:
+    """
+    Export multiple objects as a single composite GLB file.
+
+    All objects are exported together with their world transforms baked in.
+
+    Args:
+        objects: List of Blender objects to export as a composite
+        output_path: Path to save the GLB file
+
+    Returns:
+        True if export succeeded, False otherwise
+    """
+    if not objects:
+        return False
+
+    try:
+        # Deselect all objects first
+        bpy.ops.object.select_all(action='DESELECT')
+
+        # Select all component objects
+        for obj in objects:
+            obj.select_set(True)
+
+        # Set the first object as active
+        bpy.context.view_layer.objects.active = objects[0]
+
+        # Export with baked world transforms
+        bpy.ops.export_scene.gltf(
+            filepath=str(output_path),
+            use_selection=True,
+            export_apply=True,  # Bake world transforms into vertices
+            export_format='GLB',
+            export_yup=True  # Standard glTF Y-up convention
+        )
+
+        return True
+
+    except Exception as e:
+        print(f"Error exporting composite to {output_path}: {e}")
+        return False
+
+
 # =============================================================================
 # Texture Baking Functions
 # =============================================================================
@@ -1140,29 +1273,40 @@ def convert_sceneweaver_scene(
     print(f"  Opening Blender file: {blend_file}")
     bpy.ops.wm.open_mainfile(filepath=str(blend_file))
 
-    # DIRECT BLENDER TRAVERSAL: Find all spawn_asset objects
-    # This matches SceneWeaver's own object counting methodology (Nobj_unique)
-    spawn_objects = find_all_spawn_asset_objects()
-    print(f"  Found {len(spawn_objects)} spawn_asset objects in Blender")
+    # Group Blender objects by factory seed
+    # This allows us to export composite factory objects (bed+mattress+pillows) as single units
+    # This matches SceneWeaver's count_factory_objects() methodology (Nobj_factory)
+    blender_seed_groups = group_blender_objects_by_factory_seed()
+    total_spawn_objects = sum(len(objs) for objs in blender_seed_groups.values())
+    print(f"  Found {total_spawn_objects} spawn_asset objects in {len(blender_seed_groups)} factory groups")
 
-    # Process objects
+    # Process each factory group as a single composite object
     objects_data = []
 
-    for obj in spawn_objects:
-        # Generate unique object ID from Blender object name
-        obj_id = generate_object_id_from_blender(obj)
-        print(f"    Processing: {obj.name} -> {obj_id}")
+    for seed, component_objects in blender_seed_groups.items():
+        # Determine the primary factory type for this composite
+        # Use the first object's factory type (they should all share the same seed)
+        primary_obj = component_objects[0]
+        paren_idx = primary_obj.name.find("(")
+        factory_type = primary_obj.name[:paren_idx] if paren_idx > 0 else "Unknown"
 
-        # Bake procedural materials to textures before export
-        bake_procedural_materials(obj, scene_assets_dir, resolution=1024)
+        # Create object ID: {seed}_{FactoryType}
+        obj_id = f"{seed}_{factory_type}"
 
-        # Export single object (NO hierarchy)
+        component_names = [obj.name for obj in component_objects]
+        print(f"    Processing: {obj_id} ({len(component_objects)} components)")
+
+        # Bake procedural materials for all component objects
+        for obj in component_objects:
+            bake_procedural_materials(obj, scene_assets_dir, resolution=1024)
+
+        # Export all components as a single composite GLB
         glb_path = scene_assets_dir / f"{obj_id}.glb"
-        if not export_object_as_glb(obj, glb_path):
+        if not export_composite_as_glb(component_objects, glb_path):
             print(f"      Failed to export: {obj_id}")
             continue
 
-        print(f"      Exported: {glb_path.name}")
+        print(f"      Exported: {glb_path.name} (components: {component_names})")
 
         # Use Identity transform since world position is baked into the GLB via export_apply=True
         transform_data = create_identity_transform()
