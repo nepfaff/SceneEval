@@ -557,9 +557,11 @@ class BlenderScene:
         converted_floor_loaded = False
         converted_walls_loaded = False
 
+        logger.info(f"use_converted_architecture: {self.scene_cfg.use_converted_architecture}")
         if self.scene_cfg.use_converted_architecture and self.scene_state and self.scene_state.objs:
             # Check if this is a SceneWeaver scene by looking at object model IDs
             first_obj_model_id = self.scene_state.objs[0].model_id if self.scene_state.objs else None
+            logger.info(f"first_obj_model_id: {first_obj_model_id}")
             if first_obj_model_id and first_obj_model_id.startswith(("sceneweaver.", "sw.")):
                 # Extract scene ID and find assets directory
                 # Format: sceneweaver.scene_0__obj_name or sw.s0__obj_name
@@ -593,6 +595,158 @@ class BlenderScene:
 
                 except Exception as e:
                     # Fall back to procedural architecture on any error
+                    pass
+
+            # Check for Holodeck scenes (model IDs starting with "objaverse.")
+            elif first_obj_model_id and first_obj_model_id.startswith("objaverse."):
+                try:
+                    # For Holodeck, the architecture GLB is in the assets directory
+                    # alongside the scene JSON. Use the scene_state file path to find it.
+                    if hasattr(self.scene_state, 'source_path') and self.scene_state.source_path:
+                        from pathlib import Path
+                        scene_json_path = Path(self.scene_state.source_path)
+                        assets_dir = scene_json_path.parent / "assets"
+                        scene_name = scene_json_path.stem  # e.g., "scene_106"
+
+                        # Check for scene-specific architecture GLB
+                        arch_glb = assets_dir / f"architecture_{scene_name}.glb"
+                        logger.info(f"Looking for architecture GLB at: {arch_glb}")
+                        if arch_glb.exists():
+                            logger.info(f"Loading architecture GLB: {arch_glb}")
+                            bpy.ops.import_scene.gltf(filepath=str(arch_glb))
+                            # Register imported objects as architecture
+                            imported_objs = list(bpy.context.selected_objects)
+
+                            # Fix Unity to Blender coordinate system mismatch
+                            # Unity is left-handed (X-right, Y-up, Z-forward)
+                            # glTF/Blender are right-handed with different axis mapping
+                            # The glTF importer's Y-up to Z-up rotation maps:
+                            #   glTF X → Blender X
+                            #   glTF Y → Blender Z
+                            #   glTF Z → Blender -Y
+                            # If UnityGLTF doesn't properly negate Z for handedness,
+                            # we get both X and Y flipped in Blender's top-down view.
+                            # Fix: 180° rotation around Z (negate both X and Y scale)
+                            # This has determinant=1, so normals are preserved.
+                            logger.info("Applying 180° rotation (XY flip) to fix coordinate system")
+                            for obj in imported_objs:
+                                if obj.parent is None:
+                                    # 180° rotation via scale negation on root objects
+                                    obj.scale.x = -obj.scale.x
+                                    obj.scale.y = -obj.scale.y
+
+                            # Make mesh data single-user before applying transform
+                            # (some imported objects share mesh data which blocks transform_apply)
+                            for obj in imported_objs:
+                                if obj.type == 'MESH' and obj.data and obj.data.users > 1:
+                                    obj.data = obj.data.copy()
+
+                            # Apply the scale transform so mesh vertices are actually mirrored
+                            bpy.ops.object.select_all(action='DESELECT')
+                            for obj in imported_objs:
+                                obj.select_set(True)
+                            bpy.context.view_layer.objects.active = imported_objs[0] if imported_objs else None
+                            bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
+
+                            # Calculate offset to align GLB with scene coordinates
+                            # The GLB is exported in Unity's coordinate system, but
+                            # scene objects are converted with a different transform.
+                            # We need to shift the architecture to match.
+                            # Get floor bounds from scene JSON
+                            with open(scene_json_path, 'r') as f:
+                                scene_json = json.load(f)
+                            arch_elements = scene_json.get('scene', {}).get('arch', {}).get('elements', [])
+                            floor_elem = next((e for e in arch_elements if e.get('type') == 'Floor'), None)
+
+                            if floor_elem and imported_objs:
+                                # Get expected floor bounds from scene JSON
+                                floor_points = floor_elem.get('points', [])
+                                if floor_points:
+                                    xs = [p[0] for p in floor_points]
+                                    ys = [p[1] for p in floor_points]
+                                    expected_min_x = min(xs)
+                                    expected_min_y = min(ys)
+                                    expected_max_x = max(xs)
+                                    expected_max_y = max(ys)
+
+                                    # Find the floor object in imported objects
+                                    # Look for room-named objects that are NOT doors, windows, walls, ceilings
+                                    # Floor must have mesh data (not an empty container)
+                                    floor_obj = None
+                                    room_id = floor_elem.get('roomId', '')
+
+                                    # First priority: exact match with room ID and has mesh data
+                                    for obj in imported_objs:
+                                        if obj.name == room_id and obj.type == 'MESH' and obj.data:
+                                            floor_obj = obj
+                                            logger.info(f"Found floor object by room ID: {obj.name}")
+                                            break
+
+                                    # Second priority: floor-like names with mesh data
+                                    if floor_obj is None:
+                                        for obj in imported_objs:
+                                            if obj.type != 'MESH' or not obj.data:
+                                                continue
+                                            name_lower = obj.name.lower()
+                                            # Skip non-floor objects
+                                            if any(x in name_lower for x in ['door', 'window', 'wall', 'ceiling']):
+                                                continue
+                                            # Look for floor-like objects
+                                            if 'floor' in name_lower or obj.name in ['bedroom', 'living_room', 'kitchen', 'bathroom', 'office', 'dining_room']:
+                                                floor_obj = obj
+                                                logger.info(f"Found floor object: {obj.name}")
+                                                break
+
+                                    if floor_obj:
+                                        # Get imported floor bounds (in Blender coords after glTF import and mirror)
+                                        # Need to get world-space bounds
+                                        bbox = [floor_obj.matrix_world @ Vector(corner) for corner in floor_obj.bound_box]
+                                        imported_min_x = min(v.x for v in bbox)
+                                        imported_min_y = min(v.y for v in bbox)
+
+                                        # Calculate offset needed
+                                        offset_x = expected_min_x - imported_min_x
+                                        offset_y = expected_min_y - imported_min_y
+
+                                        logger.info(f"Architecture offset: ({offset_x:.2f}, {offset_y:.2f}, 0)")
+
+                                        # Apply offset only to ROOT objects (no parent)
+                                        # Child objects inherit the transform from parents
+                                        for obj in imported_objs:
+                                            if obj.parent is None:
+                                                obj.location.x += offset_x
+                                                obj.location.y += offset_y
+
+                            # Remove ceiling objects - we don't want them in renders
+                            ceilings_to_remove = [obj for obj in imported_objs if 'ceiling' in obj.name.lower()]
+                            for ceiling_obj in ceilings_to_remove:
+                                logger.info(f"Removing ceiling object: {ceiling_obj.name}")
+                                bpy.data.objects.remove(ceiling_obj, do_unlink=True)
+                                imported_objs.remove(ceiling_obj)
+
+                            # Remove exterior wall objects - we only want interior walls for renders
+                            # Exterior walls have "|exterior" suffix and different materials
+                            exteriors_to_remove = [obj for obj in imported_objs if '|exterior' in obj.name.lower()]
+                            for ext_obj in exteriors_to_remove:
+                                logger.info(f"Removing exterior wall: {ext_obj.name}")
+                                bpy.data.objects.remove(ext_obj, do_unlink=True)
+                                imported_objs.remove(ext_obj)
+
+                            for obj in imported_objs:
+                                self.b_architecture[obj.name] = obj
+                            logger.info(f"Loaded {len(imported_objs)} objects from architecture GLB")
+                            # Mark as loaded to skip procedural generation
+                            converted_floor_loaded = True
+                            converted_walls_loaded = True
+                        else:
+                            logger.info(f"Architecture GLB not found: {arch_glb}")
+                    else:
+                        logger.info("No source_path on scene_state for Holodeck scene")
+                except Exception as e:
+                    # Fall back to procedural architecture on any error
+                    logger.warning(f"Error loading Holodeck architecture GLB: {e}")
+                    import traceback
+                    logger.warning(traceback.format_exc())
                     pass
 
         # Prepare materials (needed for non-converted walls or as fallback)

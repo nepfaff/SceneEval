@@ -1,0 +1,187 @@
+diff --git a/unity/Assets/Scripts/AI2-THOR-Base.asmdef b/unity/Assets/Scripts/AI2-THOR-Base.asmdef
+index 4f9ddecab..65050d29f 100644
+--- a/unity/Assets/Scripts/AI2-THOR-Base.asmdef
++++ b/unity/Assets/Scripts/AI2-THOR-Base.asmdef
+@@ -15,7 +15,8 @@
+         "GUID:8c4dd21966739024fbd72155091d199e",
+         "GUID:f24cf67903b27ae498b3069ecc30cc11",
+         "GUID:80120b1292c15624a97f2c7983a70cea",
+-        "GUID:e230a993a6c084a0ba10310713d6dd2f"
++        "GUID:e230a993a6c084a0ba10310713d6dd2f",
++        "GUID:18d18f811ba286c49814567a3cfba688"
+     ],
+     "includePlatforms": [],
+     "excludePlatforms": [],
+diff --git a/unity/Assets/Scripts/BaseFPSAgentController.cs b/unity/Assets/Scripts/BaseFPSAgentController.cs
+index 5a52738ef..273bec7b7 100644
+--- a/unity/Assets/Scripts/BaseFPSAgentController.cs
++++ b/unity/Assets/Scripts/BaseFPSAgentController.cs
+@@ -7849,6 +7849,156 @@ namespace UnityStandardAssets.Characters.FirstPerson {
+             actionFinished(true);
+         }
+ 
++        /// <summary>
++        /// Export door and window mesh data as OBJ strings.
++        /// This action is used by SceneEval to extract door/window 3D geometry
++        /// for room view renders and GLB exports.
++        /// </summary>
++        public void ExportDoorWindowMeshes() {
++            var result = new Dictionary<string, object>();
++            var meshes = new List<Dictionary<string, object>>();
++
++            foreach (SimObjPhysics sop in physicsSceneManager.ObjectIdToSimObjPhysics.Values) {
++                if (sop.Type == SimObjType.Doorway || sop.Type == SimObjType.Window) {
++                    var meshFilters = sop.GetComponentsInChildren<MeshFilter>();
++
++                    // Combine all meshes for this object into one OBJ
++                    // Keep vertices in local space relative to sop.transform
++                    var combinedObjLines = new List<string>();
++                    combinedObjLines.Add($"o {sop.ObjectID}");
++
++                    int vertexOffset = 0;
++                    int meshCount = 0;
++                    var sopTransform = sop.transform;
++
++                    foreach (var mf in meshFilters) {
++                        if (mf.sharedMesh == null) continue;
++
++                        var mesh = mf.sharedMesh;
++                        var meshTransform = mf.transform;
++
++                        // Transform vertices to sop's local space (not world space)
++                        // This way all sub-meshes are combined relative to the object's origin
++                        foreach (var v in mesh.vertices) {
++                            // Local vertex -> world -> sop local
++                            var worldV = meshTransform.TransformPoint(v);
++                            var localV = sopTransform.InverseTransformPoint(worldV);
++                            combinedObjLines.Add($"v {localV.x} {localV.y} {localV.z}");
++                        }
++
++                        // Add faces with offset vertex indices
++                        for (int i = 0; i < mesh.triangles.Length; i += 3) {
++                            int v1 = mesh.triangles[i] + 1 + vertexOffset;
++                            int v2 = mesh.triangles[i + 1] + 1 + vertexOffset;
++                            int v3 = mesh.triangles[i + 2] + 1 + vertexOffset;
++                            combinedObjLines.Add($"f {v1} {v2} {v3}");
++                        }
++
++                        vertexOffset += mesh.vertexCount;
++                        meshCount++;
++                    }
++
++                    if (meshCount > 0) {
++                        // Use sop's world transform for positioning
++                        var worldPos = sopTransform.position;
++                        var worldRot = sopTransform.eulerAngles;
++                        var worldScale = sopTransform.lossyScale;
++
++                        meshes.Add(new Dictionary<string, object> {
++                            {"objectId", sop.ObjectID},
++                            {"type", sop.Type.ToString()},
++                            {"objData", string.Join("\n", combinedObjLines)},
++                            {"position", new float[] {worldPos.x, worldPos.y, worldPos.z}},
++                            {"rotation", new float[] {worldRot.x, worldRot.y, worldRot.z}},
++                            {"scale", new float[] {worldScale.x, worldScale.y, worldScale.z}},
++                            {"meshCount", meshCount}
++                        });
++                    }
++                }
++            }
++
++            result["meshes"] = meshes;
++            result["count"] = meshes.Count;
++
++            if (meshes.Count == 0) {
++                Debug.Log("ExportDoorWindowMeshes: No door/window meshes found.");
++            } else {
++                Debug.Log($"ExportDoorWindowMeshes: Exported {meshes.Count} combined mesh(es) with total sub-meshes counted.");
++            }
++
++            actionFinishedEmit(success: true, actionReturn: result);
++        }
++
++        /// <summary>
++        /// Export all architecture (walls, floors, doors, windows) as a GLB file with materials/textures.
++        /// Returns GLB data as base64 string.
++        /// Requires UnityGLTF package (org.khronos.unitygltf).
++        /// </summary>
++        public void ExportArchitectureGLB() {
++            try {
++                // Find all architecture objects
++                var architectureRoot = new GameObject("ArchitectureExport");
++                var objectsToExport = new List<GameObject>();
++
++                // Find structure objects (walls, floors, ceilings)
++                var structureRoot = GameObject.Find("Structure");
++                if (structureRoot != null) {
++                    // Clone structure for export
++                    var structureClone = UnityEngine.Object.Instantiate(structureRoot);
++                    structureClone.transform.SetParent(architectureRoot.transform);
++                    structureClone.name = "Structure";
++                    objectsToExport.Add(structureClone);
++                }
++
++                // Find door and window objects
++                foreach (SimObjPhysics sop in physicsSceneManager.ObjectIdToSimObjPhysics.Values) {
++                    if (sop.Type == SimObjType.Doorway || sop.Type == SimObjType.Window) {
++                        var clone = UnityEngine.Object.Instantiate(sop.gameObject);
++                        clone.transform.SetParent(architectureRoot.transform);
++                        clone.name = sop.ObjectID;
++                        objectsToExport.Add(clone);
++                    }
++                }
++
++                if (objectsToExport.Count == 0) {
++                    Destroy(architectureRoot);
++                    actionFinishedEmit(success: false, errorMessage: "No architecture objects found to export");
++                    return;
++                }
++
++                // Use UnityGLTF to export
++                var exportContext = new UnityGLTF.ExportContext();
++                var exporter = new UnityGLTF.GLTFSceneExporter(
++                    new Transform[] { architectureRoot.transform },
++                    exportContext
++                );
++
++                // Export to byte array
++                var glbBytes = exporter.SaveGLBToByteArray("architecture");
++
++                // Cleanup
++                Destroy(architectureRoot);
++
++                if (glbBytes != null && glbBytes.Length > 0) {
++                    var base64Data = System.Convert.ToBase64String(glbBytes);
++
++                    var result = new Dictionary<string, object> {
++                        {"glbBase64", base64Data},
++                        {"byteLength", glbBytes.Length},
++                        {"objectCount", objectsToExport.Count}
++                    };
++
++                    Debug.Log($"ExportArchitectureGLB: Exported {objectsToExport.Count} objects, {glbBytes.Length} bytes");
++                    actionFinishedEmit(success: true, actionReturn: result);
++                } else {
++                    actionFinishedEmit(success: false, errorMessage: "UnityGLTF export failed - empty result");
++                }
++            } catch (System.Exception e) {
++                Debug.LogError($"ExportArchitectureGLB error: {e.Message}\n{e.StackTrace}");
++                actionFinishedEmit(success: false, errorMessage: $"Export error: {e.Message}");
++            }
++        }
++
+         public void GetHouseFromTemplate(HouseTemplate template) {
+             var rooms = template.rooms.Select(room => room.Value);
+ 
+diff --git a/unity/Packages/manifest.json b/unity/Packages/manifest.json
+index e56d86822..ae2894d9f 100644
+--- a/unity/Packages/manifest.json
++++ b/unity/Packages/manifest.json
+@@ -9,6 +9,7 @@
+     }
+   ],
+   "dependencies": {
++    "org.khronos.unitygltf": "https://github.com/KhronosGroup/UnityGLTF.git#release/2.9.1-rc",
+     "com.madsbangh.easybuttons": "https://github.com/madsbangh/EasyButtons.git#upm",
+     "com.unity.2d.sprite": "1.0.0",
+     "com.unity.2d.tilemap": "1.0.0",

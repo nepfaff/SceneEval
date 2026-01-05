@@ -216,11 +216,16 @@ cd ~/ai2thor
 ```
 
 #### 4. Apply the Patch
-Apply our patch to add the `ExportDoorWindowMeshes` action:
+Apply our patch to add the `ExportDoorWindowMeshes` and `ExportArchitectureGLB` actions:
 ```bash
 cd ~/ai2thor
-git apply /path/to/SceneEval/conversion/holodeck/ExportDoorWindowMeshes.cs.patch
+git apply /path/to/SceneEval/conversion/holodeck/ai2thor_sceneeval.patch
 ```
+
+This patch modifies:
+- `unity/Assets/Scripts/BaseFPSAgentController.cs` - Adds ExportDoorWindowMeshes and ExportArchitectureGLB actions
+- `unity/Assets/Scripts/AI2-THOR-Base.asmdef` - Adds UnityGLTF assembly reference
+- `unity/Packages/manifest.json` - Adds UnityGLTF package dependency
 
 #### 5. Build the Unity Player
 
@@ -263,8 +268,10 @@ python /path/to/SceneEval/conversion/holodeck/convert_SceneEval_unity.py \
 
 When using `--local_build`, the script will:
 1. Call `ExportDoorWindowMeshes` after `CreateHouse`
-2. Save door/window OBJ files to `<output_dir>/assets/`
-3. These meshes will be loaded by SceneEval for room renders and GLB exports
+2. Call `ExportArchitectureGLB` to export walls, floors, doors, and windows with textures as GLB
+3. Save door/window OBJ files to `<output_dir>/assets/`
+4. Save architecture GLB files to `<output_dir>/assets/architecture_<scene_name>.glb`
+5. These assets will be loaded by SceneEval for room renders and GLB exports
 
 ### Without Local Build
 

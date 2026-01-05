@@ -323,6 +323,27 @@ def convert_scene(controller: Controller, scene_json_path: Path, output_path: Pa
         else:
             print(f"  WARNING: ExportDoorWindowMeshes failed: {event.metadata.get('errorMessage', 'Unknown')}")
 
+        # Export architecture as GLB (walls, floors, doors, windows with textures)
+        print("  Exporting architecture GLB...")
+        event = controller.step(action="ExportArchitectureGLB")
+        if event.metadata["lastActionSuccess"]:
+            glb_data = event.metadata.get("actionReturn", {})
+            glb_base64 = glb_data.get("glbBase64", "")
+            if glb_base64:
+                import base64
+                assets_dir = output_path.parent / "assets"
+                assets_dir.mkdir(parents=True, exist_ok=True)
+                # Use scene-specific filename (e.g., architecture_106.glb for scene_106.json)
+                scene_name = output_path.stem  # e.g., "scene_106"
+                glb_file = assets_dir / f"architecture_{scene_name}.glb"
+                with open(glb_file, 'wb') as f:
+                    f.write(base64.b64decode(glb_base64))
+                print(f"  Exported architecture GLB ({glb_data.get('byteLength', 0)} bytes, {glb_data.get('objectCount', 0)} objects)")
+            else:
+                print("  No GLB data returned")
+        else:
+            print(f"  WARNING: ExportArchitectureGLB failed: {event.metadata.get('errorMessage', 'Unknown')}")
+
     # Extract architecture info (from original JSON)
     arch_info = get_arch_info(holodeck_scene)
 
