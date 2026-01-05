@@ -1,0 +1,57 @@
+--- a/unity/Assets/Scripts/BaseFPSAgentController.cs
++++ b/unity/Assets/Scripts/BaseFPSAgentController.cs
+@@ -7849,6 +7849,54 @@ namespace UnityStandardAssets.Characters.FirstPerson {
+             actionFinished(true);
+         }
+
++        /// <summary>
++        /// Export door and window mesh data as OBJ strings.
++        /// This action is used by SceneEval to extract door/window 3D geometry
++        /// for room view renders and GLB exports.
++        /// </summary>
++        public void ExportDoorWindowMeshes() {
++            var result = new Dictionary<string, object>();
++            var meshes = new List<Dictionary<string, object>>();
++
++            foreach (SimObjPhysics sop in physicsSceneManager.ObjectIdToSimObjPhysics.Values) {
++                if (sop.Type == SimObjType.Doorway || sop.Type == SimObjType.Window) {
++                    var meshFilters = sop.GetComponentsInChildren<MeshFilter>();
++                    foreach (var mf in meshFilters) {
++                        if (mf.sharedMesh == null) continue;
++
++                        // Get mesh OBJ data using existing serialization utility
++                        var objString = Thor.Utils.SerializeMesh.MeshToObj(sop.ObjectID, mf.sharedMesh);
++
++                        // Get world transform
++                        var transform = mf.transform;
++                        var worldPos = transform.position;
++                        var worldRot = transform.eulerAngles;
++                        var worldScale = transform.lossyScale;
++
++                        meshes.Add(new Dictionary<string, object> {
++                            {"objectId", sop.ObjectID},
++                            {"type", sop.Type.ToString()},
++                            {"objData", objString},
++                            {"position", new float[] {worldPos.x, worldPos.y, worldPos.z}},
++                            {"rotation", new float[] {worldRot.x, worldRot.y, worldRot.z}},
++                            {"scale", new float[] {worldScale.x, worldScale.y, worldScale.z}}
++                        });
++                    }
++                }
++            }
++
++            result["meshes"] = meshes;
++            result["count"] = meshes.Count;
++
++            if (meshes.Count == 0) {
++                Debug.Log("ExportDoorWindowMeshes: No door/window meshes found.");
++            } else {
++                Debug.Log($"ExportDoorWindowMeshes: Exported {meshes.Count} mesh(es).");
++            }
++
++            actionFinishedEmit(success: true, actionReturn: result);
++        }
++
+         public void GetHouseFromTemplate(HouseTemplate template) {
+             var rooms = template.rooms.Select(room => room.Value);
+

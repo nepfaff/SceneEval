@@ -1,6 +1,7 @@
 import logging
 import warnings
 import pathlib
+import json
 import bpy
 import shapely
 import numpy as np
@@ -8,6 +9,79 @@ from dataclasses import dataclass, field
 from mathutils import Vector, Matrix
 
 logger = logging.getLogger(__name__)
+
+
+def _load_door_window_transforms(scene_source_path: pathlib.Path) -> dict:
+    """
+    Load door/window transform data from the assets directory if available.
+
+    Args:
+        scene_source_path: Path to the scene JSON file
+
+    Returns:
+        Dictionary mapping hole IDs to transform data, or empty dict if not found
+    """
+    if scene_source_path is None:
+        return {}
+
+    # Look for assets directory next to scene JSON
+    assets_dir = scene_source_path.parent / "assets"
+    transforms_file = assets_dir / "door_window_transforms.json"
+
+    if transforms_file.exists():
+        with open(transforms_file, 'r') as f:
+            return json.load(f)
+    return {}
+
+
+def _import_door_window_obj(obj_path: pathlib.Path, hole_name: str,
+                             hole_box_min: list, hole_box_max: list,
+                             half_wall_width: float) -> bpy.types.Object:
+    """
+    Import a door/window OBJ file and position it at hole center.
+
+    Args:
+        obj_path: Path to the OBJ file
+        hole_name: Name for the Blender object
+        hole_box_min: [x, z] min of hole in local wall coords
+        hole_box_max: [x, z] max of hole in local wall coords
+        half_wall_width: Half the wall width for positioning
+
+    Returns:
+        The imported Blender object positioned at hole center in local wall coords
+    """
+    # Import OBJ - the mesh is in Unity coordinates (Y-up)
+    bpy.ops.wm.obj_import(filepath=str(obj_path))
+    imported_obj = bpy.context.selected_objects[0]
+    imported_obj.name = hole_name
+
+    # The OBJ mesh is in Unity local coordinates (Y-up)
+    # Rotate -90° around X to convert Y-up to Z-up
+    # Then rotate 180° around Z to flip right-side up (door frame at top, not bottom)
+    imported_obj.rotation_euler = (np.radians(-90), 0, np.radians(180))
+
+    # Apply the rotation so mesh vertices are in Z-up space
+    bpy.ops.object.select_all(action="DESELECT")
+    imported_obj.select_set(True)
+    bpy.context.view_layer.objects.active = imported_obj
+    bpy.ops.object.transform_apply(location=False, rotation=True, scale=False)
+
+    # Set origin to geometry center
+    bpy.ops.object.origin_set(type='ORIGIN_GEOMETRY', center='BOUNDS')
+
+    # Calculate hole center in local wall coordinates (same system as placeholders)
+    # hole_box is [x_along_wall, z_height] in local wall space
+    hole_center_x = -half_wall_width + (hole_box_min[0] + hole_box_max[0]) / 2
+    hole_center_z = (hole_box_min[1] + hole_box_max[1]) / 2
+
+    # Move mesh center to hole center position
+    imported_obj.location = (hole_center_x, 0, hole_center_z)
+
+    # BAKE the location into vertices so location becomes (0,0,0)
+    # This matches how placeholder holes work - vertices at hole position, location at origin
+    bpy.ops.object.transform_apply(location=True, rotation=False, scale=False)
+
+    return imported_obj
 
 def _log_memory(label: str) -> None:
     """Log current memory usage from /proc/self/status."""
@@ -471,6 +545,13 @@ class BlenderScene:
         # Get the floor height
         floor_height = objs_bbox_min[2]
 
+        # Load door/window OBJ transforms if available
+        door_window_transforms = {}
+        if self.scene_state and self.scene_state.source_path:
+            door_window_transforms = _load_door_window_transforms(self.scene_state.source_path)
+            if door_window_transforms:
+                logger.info(f"Loaded {len(door_window_transforms)} door/window transforms")
+
         # Check for converted SceneWeaver architecture GLBs if enabled
         # These have baked textures from the original scene
         converted_floor_loaded = False
@@ -515,8 +596,25 @@ class BlenderScene:
                     pass
 
         # Prepare materials (needed for non-converted walls or as fallback)
+        # Wall material with default gray color (#888899)
         wall_material = bpy.data.materials.new(name="wall_material")
-        # wall_material.use_backface_culling = True
+        wall_material.use_nodes = True
+        wall_nodes = wall_material.node_tree.nodes
+        wall_nodes.clear()
+        wall_bsdf = wall_nodes.new("ShaderNodeBsdfPrincipled")
+        wall_output = wall_nodes.new("ShaderNodeOutputMaterial")
+        wall_bsdf.inputs["Base Color"].default_value = (0.85, 0.82, 0.78, 1.0)  # Warm off-white wall color
+        wall_material.node_tree.links.new(wall_bsdf.outputs["BSDF"], wall_output.inputs["Surface"])
+
+        # Floor material with wood-like tan color
+        floor_material = bpy.data.materials.new(name="floor_material")
+        floor_material.use_nodes = True
+        floor_nodes = floor_material.node_tree.nodes
+        floor_nodes.clear()
+        floor_bsdf = floor_nodes.new("ShaderNodeBsdfPrincipled")
+        floor_output = floor_nodes.new("ShaderNodeOutputMaterial")
+        floor_bsdf.inputs["Base Color"].default_value = (0.72, 0.58, 0.42, 1.0)  # Wood/tan floor color
+        floor_material.node_tree.links.new(floor_bsdf.outputs["BSDF"], floor_output.inputs["Surface"])
 
         door_material = bpy.data.materials.new(name="door_material")
         door_material.use_nodes = True
@@ -547,6 +645,9 @@ class BlenderScene:
             # Set the floor properties
             floor.scale = (length_x, length_y, 1)
             floor.location = (objs_bbox_min[0] + length_x / 2, objs_bbox_min[1] + length_y / 2, floor_height)
+
+            # Set the floor material
+            floor.data.materials.append(floor_material)
 
             # Prepare wall locations and material
             center_x, center_y, center_z = floor.location
@@ -581,7 +682,11 @@ class BlenderScene:
             
             # Store floor polygon here for later checking wall facing direction
             floor_polygon = None
-            
+
+            # Track OBJ-loaded holes across all wall elements (to avoid duplicates)
+            obj_loaded_hole_names = set()  # For visibility/material tracking
+            obj_loaded_hole_ids = set()    # To prevent loading same OBJ twice
+
             # Use the provided architecture
             for element in architecture.elements:
                     
@@ -616,9 +721,13 @@ class BlenderScene:
                         
                         # Translate the floor to the correct height
                         floor.location = (0, 0, floor_height)
-                        
+
+                        # Set the floor material (clear existing materials first)
+                        floor.data.materials.clear()
+                        floor.data.materials.append(floor_material)
+
                         self.b_architecture[floor_name] = floor
-                        
+
                         # Extra, store the 2D floor polygon for later checking wall facing direction
                         floor_polygon = shapely.geometry.Polygon(floor_points[..., :2])
                         
@@ -626,8 +735,12 @@ class BlenderScene:
                         pass
                     
                     case "Wall":
+                        # Skip exterior walls (duplicates of interior walls, facing outward)
+                        if "exterior" in element.id:
+                            continue
+
                         wall_name = f"wall_{element.id}"
-                        
+
                         # Create a empty mesh and object for the wall
                         wall_mesh = bpy.data.meshes.new(wall_name)
                         wall = bpy.data.objects.new(wall_name, wall_mesh)
@@ -690,33 +803,65 @@ class BlenderScene:
                                 # Additionally make the hole as a separate object
                                 hole_type = hole.type.lower()
                                 hole_name = f"{hole_type}_{hole_idx}_{element.id}"
-                                
-                                # Create a empty mesh and object for the hole
-                                hole_mesh = bpy.data.meshes.new(hole_name)
-                                hole = bpy.data.objects.new(hole_name, hole_mesh)
-                                bpy.context.collection.objects.link(hole)
-                                hole_name = hole.name
-                                
-                                # Select the hole object
-                                bpy.ops.object.select_all(action="DESELECT")
-                                hole.select_set(True)
-                                bpy.context.view_layer.objects.active = hole
-                                
-                                # Add the vertices and edges to the hole mesh
-                                local_hole_edges = [(i - next_edge_index, j - next_edge_index) for i, j in hole_edges]
-                                hole_mesh.from_pydata(hole_points, local_hole_edges, [])
-                                hole_mesh.update()
-                                
-                                # Fill in the faces of the hole
-                                bpy.ops.object.mode_set(mode="EDIT")
-                                bpy.ops.mesh.fill()
-                                bpy.ops.object.mode_set(mode="OBJECT")
-                                
-                                # Hide the hole object from rendering
-                                hole.hide_render = self.blender_cfg.hide_holes_in_render
-                                
+                                hole_obj = None
+
+                                # Check if we have an OBJ file for this hole
+                                hole_id = hole.id if hasattr(hole, 'id') and hole.id else None
+                                if hole_id and self.scene_state.source_path:
+                                    # Skip if already loaded (same hole on interior+exterior wall)
+                                    if hole_id in obj_loaded_hole_ids:
+                                        obj_loaded_hole_names.add(hole_name)  # Still track name for visibility
+                                        hole_obj = None  # Use placeholder for this duplicate
+                                    else:
+                                        # Load OBJ file positioned at hole center (from JSON)
+                                        assets_dir = self.scene_state.source_path.parent / "assets"
+                                        obj_file = assets_dir / f"{hole_id}.obj"
+                                        if obj_file.exists():
+                                            try:
+                                                hole_obj = _import_door_window_obj(
+                                                    obj_file,
+                                                    hole_name,
+                                                    hole.box_min,
+                                                    hole.box_max,
+                                                    half_wall_width
+                                                )
+                                                obj_loaded_hole_ids.add(hole_id)  # Mark as loaded
+                                                obj_loaded_hole_names.add(hole_name)  # Track for visibility
+                                                logger.info(f"Loaded door/window OBJ: {hole_id}")
+                                            except Exception as e:
+                                                logger.warning(f"Failed to load door/window OBJ {hole_id}: {e}")
+                                                hole_obj = None
+
+                                # Fall back to placeholder mesh if OBJ not loaded
+                                if hole_obj is None:
+                                    # Create a empty mesh and object for the hole
+                                    hole_mesh = bpy.data.meshes.new(hole_name)
+                                    hole_obj = bpy.data.objects.new(hole_name, hole_mesh)
+                                    bpy.context.collection.objects.link(hole_obj)
+
+                                    # Select the hole object
+                                    bpy.ops.object.select_all(action="DESELECT")
+                                    hole_obj.select_set(True)
+                                    bpy.context.view_layer.objects.active = hole_obj
+
+                                    # Add the vertices and edges to the hole mesh
+                                    local_hole_edges = [(i - next_edge_index, j - next_edge_index) for i, j in hole_edges]
+                                    hole_mesh.from_pydata(hole_points, local_hole_edges, [])
+                                    hole_mesh.update()
+
+                                    # Fill in the faces of the hole
+                                    bpy.ops.object.mode_set(mode="EDIT")
+                                    bpy.ops.mesh.fill()
+                                    bpy.ops.object.mode_set(mode="OBJECT")
+
+                                hole_name = hole_obj.name
+
+                                # Hide placeholder holes from rendering (NOT OBJ-loaded ones)
+                                if hole_name not in obj_loaded_hole_names:
+                                    hole_obj.hide_render = self.blender_cfg.hide_holes_in_render
+
                                 # Set the hole of the wall
-                                holes[hole_name] = hole
+                                holes[hole_name] = hole_obj
                                 
                         # Select the wall object
                         bpy.ops.object.select_all(action="DESELECT")
@@ -738,37 +883,38 @@ class BlenderScene:
                             if wall_from_to_points[1][1] > wall_from_to_points[0][1]:
                                 rotation = (0, 0, np.pi / 2)
                                 wall.rotation_euler = rotation
-                                for hole in holes.values():
+                                for hole_name, hole in holes.items():
                                     hole.rotation_euler = rotation
                             else:
                                 rotation = (0, 0, -np.pi / 2)
                                 wall.rotation_euler = rotation
-                                for hole in holes.values():
+                                for hole_name, hole in holes.items():
                                     hole.rotation_euler = rotation
                         else:
                             # Wall aligned with x-axis
                             if wall_from_to_points[1][0] < wall_from_to_points[0][0]:
                                 rotation = (0, 0, np.pi)
                                 wall.rotation_euler = rotation
-                                for hole in holes.values():
+                                for hole_name, hole in holes.items():
                                     hole.rotation_euler = rotation
 
                         # Translate the wall to the center of the two points and adjust the height
                         translation = np.mean([wall_from_to_points[0], wall_from_to_points[1]], axis=0)
                         translation += [0, 0, floor_height]
                         wall.location = translation
-                        for hole in holes.values():
+                        for hole_name, hole in holes.items():
                             hole.location = translation
-                        
+
                         # Set the origin of the wall to the center of the wall
                         bpy.ops.object.origin_set(type="ORIGIN_GEOMETRY", center="BOUNDS")
-                        
-                        # Repeat the same for the holes
-                        for hole in holes.values():
-                            bpy.ops.object.select_all(action="DESELECT")
-                            hole.select_set(True)
-                            bpy.context.view_layer.objects.active = hole
-                            bpy.ops.object.origin_set(type="ORIGIN_GEOMETRY", center="BOUNDS")
+
+                        # Repeat the same for the holes (skip OBJ-loaded - they already have origin set)
+                        for hole_name, hole in holes.items():
+                            if hole_name not in obj_loaded_hole_names:
+                                bpy.ops.object.select_all(action="DESELECT")
+                                hole.select_set(True)
+                                bpy.context.view_layer.objects.active = hole
+                                bpy.ops.object.origin_set(type="ORIGIN_GEOMETRY", center="BOUNDS")
                         bpy.ops.object.select_all(action="DESELECT")
                         wall.select_set(True)
                         bpy.context.view_layer.objects.active = wall
@@ -789,29 +935,33 @@ class BlenderScene:
                                 wall.scale[0] *= -1
                                 wall.rotation_euler[2] += np.pi
                                 bpy.ops.object.transform_apply(location=False, rotation=False, scale=True) # Apply the scale to the mesh
-                                
-                                # Repeat the same for the holes
-                                for hole in holes.values():
-                                    bpy.ops.object.select_all(action="DESELECT")
-                                    hole.select_set(True)
-                                    bpy.context.view_layer.objects.active = hole
-                                    hole.scale[0] *= -1
-                                    hole.rotation_euler[2] += np.pi
-                                    bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
+
+                                # Repeat the same for placeholder holes (OBJ holes handle this differently)
+                                for hole_name, hole in holes.items():
+                                    if hole_name not in obj_loaded_hole_names:
+                                        bpy.ops.object.select_all(action="DESELECT")
+                                        hole.select_set(True)
+                                        bpy.context.view_layer.objects.active = hole
+                                        hole.scale[0] *= -1
+                                        hole.rotation_euler[2] += np.pi
+                                        bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
                             
                         else:
                             warnings.warn("Floor polygon is not available for checking wall facing direction. Maybe the load order is incorrect?")
                         
-                        # Set the wall material
+                        # Set the wall material (clear existing materials first)
                         wall.visible_shadow = False
+                        wall.data.materials.clear()
                         wall.data.materials.append(wall_material)
                         for hole_name, hole in holes.items():
                             hole.visible_shadow = False
-                            match hole_name.split("_")[0]:
-                                case "door":
-                                    hole.data.materials.append(door_material)
-                                case "window":
-                                    hole.data.materials.append(window_material)
+                            # Only apply placeholder materials to non-OBJ holes
+                            if hole_name not in obj_loaded_hole_names:
+                                match hole_name.split("_")[0]:
+                                    case "door":
+                                        hole.data.materials.append(door_material)
+                                    case "window":
+                                        hole.data.materials.append(window_material)
                         
                         self.b_architecture[wall_name] = wall
                         for hole_name, hole in holes.items():

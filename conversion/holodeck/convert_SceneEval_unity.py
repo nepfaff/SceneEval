@@ -252,8 +252,16 @@ def get_object_info_from_unity(unity_objects: list, holodeck_scene: dict) -> lis
     return object_info
 
 
-def convert_scene(controller: Controller, scene_json_path: Path, output_path: Path) -> bool:
-    """Convert a single Holodeck scene using Unity."""
+def convert_scene(controller: Controller, scene_json_path: Path, output_path: Path,
+                  use_local_build: bool = False) -> bool:
+    """Convert a single Holodeck scene using Unity.
+
+    Args:
+        controller: ai2thor Controller instance
+        scene_json_path: Path to Holodeck scene JSON
+        output_path: Output path for SceneEval JSON
+        use_local_build: If True, export door/window meshes (requires patched ai2thor)
+    """
     print(f"Converting: {scene_json_path}")
 
     # Load Holodeck scene JSON
@@ -274,6 +282,46 @@ def convert_scene(controller: Controller, scene_json_path: Path, output_path: Pa
     # Get object count from Unity for verification
     unity_objects = event.metadata.get("objects", [])
     print(f"  Unity loaded {len(unity_objects)} objects")
+
+    # Export door/window meshes if using local build with patched ai2thor
+    if use_local_build:
+        print("  Exporting door/window meshes...")
+        event = controller.step(action="ExportDoorWindowMeshes")
+        if event.metadata["lastActionSuccess"]:
+            mesh_data = event.metadata.get("actionReturn", {})
+            meshes = mesh_data.get("meshes", [])
+            if meshes:
+                # Create assets directory
+                assets_dir = output_path.parent / "assets"
+                assets_dir.mkdir(parents=True, exist_ok=True)
+
+                # Save OBJ files and collect transform data
+                transforms = {}
+                for mesh_info in meshes:
+                    obj_id = mesh_info["objectId"]
+                    obj_data = mesh_info["objData"]
+                    obj_file = assets_dir / f"{obj_id}.obj"
+                    with open(obj_file, 'w') as f:
+                        f.write(obj_data)
+
+                    # Store transform data (Unity coordinates)
+                    transforms[obj_id] = {
+                        "position": mesh_info.get("position", [0, 0, 0]),
+                        "rotation": mesh_info.get("rotation", [0, 0, 0]),
+                        "scale": mesh_info.get("scale", [1, 1, 1]),
+                        "type": mesh_info.get("type", "Unknown")
+                    }
+
+                # Save transforms JSON
+                transforms_file = assets_dir / "door_window_transforms.json"
+                with open(transforms_file, 'w') as f:
+                    json.dump(transforms, f, indent=2)
+
+                print(f"  Exported {len(meshes)} door/window mesh(es)")
+            else:
+                print("  No door/window meshes found")
+        else:
+            print(f"  WARNING: ExportDoorWindowMeshes failed: {event.metadata.get('errorMessage', 'Unknown')}")
 
     # Extract architecture info (from original JSON)
     arch_info = get_arch_info(holodeck_scene)
@@ -322,6 +370,8 @@ def main():
                         help="Output directory for SceneEval scene state JSONs")
     parser.add_argument("--mapping", type=str, default=None,
                         help="JSON mapping of source scene index to output scene ID")
+    parser.add_argument("--local_build", type=Path, default=None,
+                        help="Path to locally built ai2thor executable (for door/window mesh export)")
     args = parser.parse_args()
 
     # Parse mapping
@@ -336,21 +386,39 @@ def main():
     print(f"Found {len(scene_jsons)} scenes to convert")
 
     # Create ai2thor controller
-    print("Creating ai2thor controller with CloudRendering...")
-    controller = Controller(
-        commit_id=THOR_COMMIT_ID,
-        platform=CloudRendering,
-        scene="Procedural",
-        gridSize=0.25,
-        width=300,
-        height=300,
-        makeAgentsVisible=False,
-        action_hook_runner=ProceduralAssetHookRunner(
-            asset_directory=OBJATHOR_ASSETS_DIR,
-            asset_symlink=True,
-            verbose=False,
-        ),
-    )
+    use_local_build = args.local_build is not None and args.local_build.exists()
+    if use_local_build:
+        print(f"Creating ai2thor controller with local build: {args.local_build}")
+        controller = Controller(
+            local_executable_path=str(args.local_build),
+            platform=CloudRendering,
+            scene="Procedural",
+            gridSize=0.25,
+            width=300,
+            height=300,
+            makeAgentsVisible=False,
+            action_hook_runner=ProceduralAssetHookRunner(
+                asset_directory=OBJATHOR_ASSETS_DIR,
+                asset_symlink=True,
+                verbose=False,
+            ),
+        )
+    else:
+        print("Creating ai2thor controller with CloudRendering...")
+        controller = Controller(
+            commit_id=THOR_COMMIT_ID,
+            platform=CloudRendering,
+            scene="Procedural",
+            gridSize=0.25,
+            width=300,
+            height=300,
+            makeAgentsVisible=False,
+            action_hook_runner=ProceduralAssetHookRunner(
+                asset_directory=OBJATHOR_ASSETS_DIR,
+                asset_symlink=True,
+                verbose=False,
+            ),
+        )
     print("Controller created!")
 
     try:
@@ -367,7 +435,7 @@ def main():
                     scene_id = idx
 
             output_path = args.output_dir / f"scene_{scene_id}.json"
-            convert_scene(controller, scene_json, output_path)
+            convert_scene(controller, scene_json, output_path, use_local_build=use_local_build)
 
     finally:
         print("Stopping controller...")

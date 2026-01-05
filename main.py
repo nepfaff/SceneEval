@@ -69,6 +69,9 @@ class RenderConfig:
     normal_render_tasks: list[str] | None = None
     semantic_render_tasks: list[str] | None = None
     semantic_color_reference: str | None = None
+    export_web_glb: bool = False
+    web_glb_max_texture_size: int = 512
+    hdri_path: str | None = None
 
 @dataclass
 class EvaluationPlan:
@@ -129,6 +132,10 @@ def _render_scene(scene: Scene, render_tasks: list[str]) -> None:
                 scene.blender_scene.render_all_objs_front_surroundings()
             case "obj_global_top":
                 scene.blender_scene.render_all_objs_global_top()
+            case "room_views":
+                # Room views are rendered from original blend files
+                # This case is handled separately in the main loop
+                pass
 
 
 def _copy_and_render_original_sceneweaver_blend(scene: Scene, method_scene_file: pathlib.Path, output_dir: pathlib.Path) -> None:
@@ -174,7 +181,7 @@ def _copy_and_render_original_sceneweaver_blend(scene: Scene, method_scene_file:
     bpy.context.scene.cycles.samples = 128
     bpy.context.scene.render.resolution_x = 512
     bpy.context.scene.render.resolution_y = 512
-    bpy.context.scene.render.film_transparent = False
+    bpy.context.scene.render.film_transparent = True
 
     # Hide room enclosure meshes and placeholder/bounding box objects
     for obj in bpy.data.objects:
@@ -305,7 +312,7 @@ def _copy_and_render_original_scene_agent_blend(scene: Scene, method_scene_file:
     bpy.context.scene.cycles.samples = 128
     bpy.context.scene.render.resolution_x = 512
     bpy.context.scene.render.resolution_y = 512
-    bpy.context.scene.render.film_transparent = False
+    bpy.context.scene.render.film_transparent = True
 
     # Find scene bounds from all mesh objects
     import mathutils as mu
@@ -388,6 +395,460 @@ def _copy_and_render_original_scene_agent_blend(scene: Scene, method_scene_file:
         bpy.ops.wm.open_mainfile(filepath=current_blend)
     else:
         bpy.ops.wm.read_homefile()
+
+
+def _hide_sceneweaver_placeholders() -> list[str]:
+    """Hide SceneWeaver placeholder/bbox objects from render and export.
+
+    SceneWeaver generates placeholder objects with names containing 'placeholder'
+    or 'bbox_placeholder' that should not appear in final renders or GLB exports.
+
+    Returns:
+        List of hidden object names.
+    """
+    import bpy
+
+    hidden = []
+    for obj in bpy.data.objects:
+        name_lower = obj.name.lower()
+        if 'placeholder' in name_lower or 'bbox' in name_lower:
+            obj.hide_render = True
+            obj.hide_viewport = True
+            hidden.append(obj.name)
+
+    if hidden:
+        print(f"  Hidden {len(hidden)} SceneWeaver placeholder objects")
+
+    return hidden
+
+
+def _render_room_views_from_blend(
+    blend_path: pathlib.Path,
+    output_dir: pathlib.Path,
+    hdri_path: pathlib.Path | None = None,
+    resolution: int = 512,
+) -> None:
+    """
+    Render 9 room views (1 top + 8 side) from a blend file with wall hiding.
+
+    Args:
+        blend_path: Path to the original blend file.
+        output_dir: Output directory for rendered images.
+        hdri_path: Optional HDRI file for consistent lighting.
+        resolution: Render resolution (square).
+    """
+    import bpy
+    import math
+    from mathutils import Vector
+    from scenes.wall_utils import (
+        get_all_walls,
+        compute_scene_centroid,
+        hide_walls_for_view,
+        restore_all_walls,
+        add_transparent_walls,
+    )
+
+    if not blend_path.exists():
+        print(f"  Blend file not found: {blend_path}")
+        return
+
+    # Create room_views output directory
+    room_views_dir = output_dir / "room_views"
+    room_views_dir.mkdir(parents=True, exist_ok=True)
+
+    # Save current state and open blend file
+    current_blend = bpy.data.filepath
+    bpy.ops.wm.open_mainfile(filepath=str(blend_path))
+
+    # Hide SceneWeaver placeholder objects (if any)
+    _hide_sceneweaver_placeholders()
+
+    # Add transparent walls for SceneWeaver (dollhouse effect)
+    # These are one-sided walls visible from inside the room but transparent from outside
+    existing_walls = get_all_walls()
+    if not existing_walls:
+        print("  Adding transparent walls for dollhouse effect")
+        add_transparent_walls()
+
+    # Set up render settings
+    bpy.context.scene.render.engine = 'CYCLES'
+    # Try GPU first, fall back to CPU
+    try:
+        bpy.context.preferences.addons['cycles'].preferences.compute_device_type = 'CUDA'
+        bpy.context.preferences.addons['cycles'].preferences.get_devices()
+        bpy.context.scene.cycles.device = 'GPU'
+    except Exception:
+        bpy.context.scene.cycles.device = 'CPU'
+    bpy.context.scene.cycles.samples = 128
+    bpy.context.scene.cycles.use_denoising = True
+    bpy.context.scene.render.resolution_x = resolution
+    bpy.context.scene.render.resolution_y = resolution
+    bpy.context.scene.render.film_transparent = True
+
+    # Set up HDRI lighting if provided
+    if hdri_path and hdri_path.exists():
+        _setup_hdri_lighting(hdri_path)
+
+    # Find scene bounds from visible mesh objects
+    min_coords = Vector((float('inf'), float('inf'), float('inf')))
+    max_coords = Vector((float('-inf'), float('-inf'), float('-inf')))
+
+    for obj in bpy.data.objects:
+        if obj.type == 'MESH' and obj.visible_get():
+            for corner in obj.bound_box:
+                world_v = obj.matrix_world @ Vector(corner)
+                min_coords.x = min(min_coords.x, world_v.x)
+                min_coords.y = min(min_coords.y, world_v.y)
+                min_coords.z = min(min_coords.z, world_v.z)
+                max_coords.x = max(max_coords.x, world_v.x)
+                max_coords.y = max(max_coords.y, world_v.y)
+                max_coords.z = max(max_coords.z, world_v.z)
+
+    # Handle empty scene
+    if min_coords.x == float('inf'):
+        min_coords = Vector((-3, -3, 0))
+        max_coords = Vector((3, 3, 2))
+
+    scene_center = (min_coords + max_coords) / 2
+    scene_size = max(max_coords.x - min_coords.x, max_coords.y - min_coords.y)
+    camera_distance = scene_size * 1.5
+
+    # Create camera
+    cam_data = bpy.data.cameras.new("RoomViewCamera")
+    cam = bpy.data.objects.new("RoomViewCamera", cam_data)
+    bpy.context.scene.collection.objects.link(cam)
+    bpy.context.scene.camera = cam
+
+    # Define views: 1 top + 8 side views
+    views = [
+        {"name": "room_0_top", "is_top": True, "azimuth": 0},
+    ]
+    for i in range(8):
+        azimuth = i * 45  # 0, 45, 90, ... 315 degrees
+        views.append({
+            "name": f"room_{i+1}_side_{azimuth}",
+            "is_top": False,
+            "azimuth": azimuth,
+        })
+
+    # Render each view
+    for view in views:
+        restore_all_walls()
+
+        if view["is_top"]:
+            # Top-down perspective view - position camera to fill frame with room
+            # Use 35mm lens (~63° FOV) and calculate height to fit scene with margin
+            top_view_height = scene_size * 1.1  # Height above scene for good framing with margin
+            cam.location = Vector((scene_center.x, scene_center.y, max_coords.z + top_view_height))
+            cam.rotation_euler = (0, 0, 0)
+            cam.data.type = 'PERSP'
+            cam.data.lens = 35  # Moderate wide angle for better room framing
+
+            # Show all walls for top view (don't hide)
+            hide_walls_for_view(cam.location, scene_center, is_top_view=True)
+        else:
+            # Side view with 30° elevation
+            elevation_rad = math.radians(30)
+            azimuth_rad = math.radians(view["azimuth"])
+
+            # Camera position on sphere around scene center
+            x = scene_center.x + camera_distance * math.cos(elevation_rad) * math.cos(azimuth_rad)
+            y = scene_center.y + camera_distance * math.cos(elevation_rad) * math.sin(azimuth_rad)
+            z = scene_center.z + camera_distance * math.sin(elevation_rad)
+
+            cam.location = Vector((x, y, z))
+            cam.data.type = 'PERSP'
+            cam.data.lens = 35
+
+            # Point camera at scene center
+            direction = scene_center - cam.location
+            rot_quat = direction.to_track_quat('-Z', 'Y')
+            cam.rotation_euler = rot_quat.to_euler()
+
+            # Hide walls blocking this view
+            hide_walls_for_view(cam.location, scene_center, is_top_view=False)
+
+        bpy.context.view_layer.update()
+
+        # Render
+        output_path = room_views_dir / f"{view['name']}.png"
+        bpy.context.scene.render.filepath = str(output_path)
+        bpy.ops.render.render(write_still=True)
+        print(f"  Rendered: {output_path}")
+
+    # Restore walls and cleanup
+    restore_all_walls()
+
+    # Reload previous blend file
+    if current_blend:
+        bpy.ops.wm.open_mainfile(filepath=current_blend)
+    else:
+        bpy.ops.wm.read_homefile()
+
+    print(f"  Room views saved to: {room_views_dir}")
+
+
+def _setup_hdri_lighting(hdri_path: pathlib.Path, strength: float = 1.0) -> None:
+    """Set up HDRI environment lighting for consistent renders."""
+    import bpy
+
+    world = bpy.context.scene.world
+    if world is None:
+        world = bpy.data.worlds.new("World")
+        bpy.context.scene.world = world
+
+    world.use_nodes = True
+    nodes = world.node_tree.nodes
+    links = world.node_tree.links
+
+    # Clear existing nodes
+    nodes.clear()
+
+    # Create nodes
+    bg = nodes.new('ShaderNodeBackground')
+    env = nodes.new('ShaderNodeTexEnvironment')
+    output = nodes.new('ShaderNodeOutputWorld')
+
+    # Load HDRI
+    env.image = bpy.data.images.load(str(hdri_path))
+    bg.inputs['Strength'].default_value = strength
+
+    # Connect nodes
+    links.new(env.outputs['Color'], bg.inputs['Color'])
+    links.new(bg.outputs['Background'], output.inputs['Surface'])
+
+
+def _export_web_glb_from_blend(
+    blend_path: pathlib.Path,
+    output_dir: pathlib.Path,
+    max_texture_size: int = 512,
+) -> None:
+    """
+    Export web-optimized GLB from a blend file.
+
+    Args:
+        blend_path: Path to the original blend file.
+        output_dir: Output directory for the GLB file.
+        max_texture_size: Maximum texture dimension.
+    """
+    import bpy
+    from scenes.glb_optimization import optimize_scene_for_web, export_optimized_glb
+
+    if not blend_path.exists():
+        print(f"  Blend file not found: {blend_path}")
+        return
+
+    # Save current state and open blend file
+    current_blend = bpy.data.filepath
+    bpy.ops.wm.open_mainfile(filepath=str(blend_path))
+
+    # Hide SceneWeaver placeholder objects (if any)
+    _hide_sceneweaver_placeholders()
+
+    # Apply optimizations
+    print(f"  Optimizing scene for web export...")
+    stats = optimize_scene_for_web(
+        max_texture_size=max_texture_size,
+        max_decimation_ratio=0.5,
+        convert_to_jpeg=True,
+    )
+    print(f"  Optimization stats: {stats}")
+
+    # Export GLB
+    glb_path = output_dir / "scene_web.glb"
+    success = export_optimized_glb(glb_path, use_draco=True)
+
+    if success:
+        # Report file size
+        size_mb = glb_path.stat().st_size / (1024 * 1024)
+        print(f"  Exported web GLB: {glb_path} ({size_mb:.2f} MB)")
+    else:
+        print(f"  Failed to export web GLB")
+
+    # Reload previous blend file
+    if current_blend:
+        bpy.ops.wm.open_mainfile(filepath=current_blend)
+    else:
+        bpy.ops.wm.read_homefile()
+
+
+def _get_original_blend_path(method: str, method_scene_file: pathlib.Path) -> pathlib.Path | None:
+    """Get the path to the original blend file for a method."""
+    scene_dir = method_scene_file.parent / method_scene_file.stem / "assets"
+
+    blend_filenames = {
+        "SceneWeaver": "original_sceneweaver.blend",
+        "SceneAgent": "original_scene_agent.blend",
+        "IDesign": "original_idesign.blend",
+        "LayoutVLM": "original_layoutvlm.blend",
+        "HSM": "original_hsm.blend",
+    }
+
+    if method not in blend_filenames:
+        return None
+
+    blend_path = scene_dir / blend_filenames[method]
+    return blend_path if blend_path.exists() else None
+
+
+def _render_room_views_from_current_scene(
+    output_dir: pathlib.Path,
+    hdri_path: pathlib.Path | None = None,
+    resolution: int = 512,
+) -> None:
+    """
+    Render 9 room views from the current Blender scene (for methods without original blend).
+
+    Args:
+        output_dir: Output directory for rendered images.
+        hdri_path: Optional HDRI file for consistent lighting.
+        resolution: Render resolution (square).
+    """
+    import bpy
+    import math
+    from mathutils import Vector
+    from scenes.wall_utils import (
+        get_all_walls,
+        hide_walls_for_view,
+        restore_all_walls,
+        add_transparent_walls,
+    )
+
+    # Create room_views output directory
+    room_views_dir = output_dir / "room_views"
+    room_views_dir.mkdir(parents=True, exist_ok=True)
+
+    # Add transparent walls if scene doesn't have walls (IDesign, etc.)
+    existing_walls = get_all_walls()
+    if not existing_walls:
+        print("  Adding transparent walls for dollhouse effect")
+        add_transparent_walls()
+
+    # Set up render settings
+    bpy.context.scene.render.engine = 'CYCLES'
+    # Try GPU first, fall back to CPU
+    try:
+        bpy.context.preferences.addons['cycles'].preferences.compute_device_type = 'CUDA'
+        bpy.context.preferences.addons['cycles'].preferences.get_devices()
+        bpy.context.scene.cycles.device = 'GPU'
+    except Exception:
+        bpy.context.scene.cycles.device = 'CPU'
+    bpy.context.scene.cycles.samples = 128
+    bpy.context.scene.cycles.use_denoising = True
+    bpy.context.scene.render.resolution_x = resolution
+    bpy.context.scene.render.resolution_y = resolution
+    bpy.context.scene.render.film_transparent = True
+
+    # Set up HDRI lighting if provided
+    if hdri_path and hdri_path.exists():
+        _setup_hdri_lighting(hdri_path)
+
+    # Find scene bounds from visible mesh objects
+    min_coords = Vector((float('inf'), float('inf'), float('inf')))
+    max_coords = Vector((float('-inf'), float('-inf'), float('-inf')))
+
+    for obj in bpy.data.objects:
+        if obj.type == 'MESH' and obj.visible_get():
+            for corner in obj.bound_box:
+                world_v = obj.matrix_world @ Vector(corner)
+                min_coords.x = min(min_coords.x, world_v.x)
+                min_coords.y = min(min_coords.y, world_v.y)
+                min_coords.z = min(min_coords.z, world_v.z)
+                max_coords.x = max(max_coords.x, world_v.x)
+                max_coords.y = max(max_coords.y, world_v.y)
+                max_coords.z = max(max_coords.z, world_v.z)
+
+    # Handle empty scene
+    if min_coords.x == float('inf'):
+        min_coords = Vector((-3, -3, 0))
+        max_coords = Vector((3, 3, 2))
+
+    scene_center = (min_coords + max_coords) / 2
+    scene_size = max(max_coords.x - min_coords.x, max_coords.y - min_coords.y)
+    camera_distance = scene_size * 1.5
+
+    # Create or reuse camera
+    cam = bpy.data.objects.get("RoomViewCamera")
+    if not cam:
+        cam_data = bpy.data.cameras.new("RoomViewCamera")
+        cam = bpy.data.objects.new("RoomViewCamera", cam_data)
+        bpy.context.scene.collection.objects.link(cam)
+    bpy.context.scene.camera = cam
+
+    # Define views: 1 top + 8 side views
+    views = [{"name": "room_0_top", "is_top": True, "azimuth": 0}]
+    for i in range(8):
+        azimuth = i * 45
+        views.append({"name": f"room_{i+1}_side_{azimuth}", "is_top": False, "azimuth": azimuth})
+
+    # Render each view
+    for view in views:
+        restore_all_walls()
+
+        if view["is_top"]:
+            # Top-down perspective view - position camera to fill frame with room
+            # Use 35mm lens (~63° FOV) and calculate height to fit scene with margin
+            top_view_height = scene_size * 1.1  # Height above scene for good framing with margin
+            cam.location = Vector((scene_center.x, scene_center.y, max_coords.z + top_view_height))
+            cam.rotation_euler = (0, 0, 0)
+            cam.data.type = 'PERSP'
+            cam.data.lens = 35  # Moderate wide angle for better room framing
+            # Show all walls for top view (don't hide)
+            hide_walls_for_view(cam.location, scene_center, is_top_view=True)
+        else:
+            elevation_rad = math.radians(30)
+            azimuth_rad = math.radians(view["azimuth"])
+            x = scene_center.x + camera_distance * math.cos(elevation_rad) * math.cos(azimuth_rad)
+            y = scene_center.y + camera_distance * math.cos(elevation_rad) * math.sin(azimuth_rad)
+            z = scene_center.z + camera_distance * math.sin(elevation_rad)
+            cam.location = Vector((x, y, z))
+            cam.data.type = 'PERSP'
+            cam.data.lens = 35
+            direction = scene_center - cam.location
+            rot_quat = direction.to_track_quat('-Z', 'Y')
+            cam.rotation_euler = rot_quat.to_euler()
+            hide_walls_for_view(cam.location, scene_center, is_top_view=False)
+
+        bpy.context.view_layer.update()
+        output_path = room_views_dir / f"{view['name']}.png"
+        bpy.context.scene.render.filepath = str(output_path)
+        bpy.ops.render.render(write_still=True)
+        print(f"  Rendered: {output_path}")
+
+    restore_all_walls()
+    print(f"  Room views saved to: {room_views_dir}")
+
+
+def _export_web_glb_from_current_scene(
+    output_dir: pathlib.Path,
+    max_texture_size: int = 512,
+) -> None:
+    """
+    Export web-optimized GLB from the current Blender scene.
+
+    Args:
+        output_dir: Output directory for the GLB file.
+        max_texture_size: Maximum texture dimension.
+    """
+    import bpy
+    from scenes.glb_optimization import optimize_scene_for_web, export_optimized_glb
+
+    print(f"  Optimizing current scene for web export...")
+    stats = optimize_scene_for_web(
+        max_texture_size=max_texture_size,
+        max_decimation_ratio=0.5,
+        convert_to_jpeg=True,
+    )
+    print(f"  Optimization stats: {stats}")
+
+    glb_path = output_dir / "scene_web.glb"
+    success = export_optimized_glb(glb_path, use_draco=True)
+
+    if success:
+        size_mb = glb_path.stat().st_size / (1024 * 1024)
+        print(f"  Exported web GLB: {glb_path} ({size_mb:.2f} MB)")
+    else:
+        print(f"  Failed to export web GLB")
 
 
 def _get_obj_matching(scene: Scene,
@@ -574,6 +1035,46 @@ def main(cfg: DictConfig) -> None:
                     _copy_and_render_original_scene_agent_blend(scene, method_scene_file, output_dir)
                     # Recreate scene after rendering original blend
                     scene = Scene(mesh_retriever, scene_state, scene_cfg, blender_cfg, trimesh_cfg, output_dir)
+
+                # ---------------------------------------------------
+                # Room views and web GLB export (from original blend files)
+                # ---------------------------------------------------
+
+                # Get original blend file path
+                original_blend = _get_original_blend_path(method, method_scene_file)
+
+                # Render room views if requested
+                if evaluation_plan.render_cfg.normal_render_tasks and "room_views" in evaluation_plan.render_cfg.normal_render_tasks:
+                    if original_blend:
+                        print(f"  Rendering room views from: {original_blend}")
+                        hdri_path = pathlib.Path(evaluation_plan.render_cfg.hdri_path) if evaluation_plan.render_cfg.hdri_path else None
+                        _render_room_views_from_blend(original_blend, output_dir, hdri_path)
+                        # Recreate scene after room view rendering
+                        scene = Scene(mesh_retriever, scene_state, scene_cfg, blender_cfg, trimesh_cfg, output_dir)
+                    else:
+                        # No original blend - render from current Blender scene
+                        print(f"  Rendering room views from current scene for {method}")
+                        hdri_path = pathlib.Path(evaluation_plan.render_cfg.hdri_path) if evaluation_plan.render_cfg.hdri_path else None
+                        _render_room_views_from_current_scene(output_dir, hdri_path)
+
+                # Export web-optimized GLB if requested
+                if evaluation_plan.render_cfg.export_web_glb:
+                    if original_blend:
+                        print(f"  Exporting web GLB from: {original_blend}")
+                        _export_web_glb_from_blend(
+                            original_blend,
+                            output_dir,
+                            max_texture_size=evaluation_plan.render_cfg.web_glb_max_texture_size,
+                        )
+                        # Recreate scene after GLB export
+                        scene = Scene(mesh_retriever, scene_state, scene_cfg, blender_cfg, trimesh_cfg, output_dir)
+                    else:
+                        # No original blend - export from current Blender scene
+                        print(f"  Exporting web GLB from current scene for {method}")
+                        _export_web_glb_from_current_scene(
+                            output_dir,
+                            max_texture_size=evaluation_plan.render_cfg.web_glb_max_texture_size,
+                        )
 
                 # If no_eval and not semantic_render, can skip the rest
                 if evaluation_plan.evaluation_cfg.no_eval and not evaluation_plan.render_cfg.semantic_render_tasks:

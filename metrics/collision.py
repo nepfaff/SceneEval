@@ -58,8 +58,21 @@ class CollisionMetric(BaseMetric):
             if obj_id not in carpet_ids
         ]
 
+        # Exclude SceneWeaver placeholder objects (spawn_placeholder, bbox_placeholder)
+        placeholder_ids = {
+            obj_id for obj_id in self.scene.get_obj_ids()
+            if 'placeholder' in obj_id.lower()
+        }
+        non_carpet_obj_ids = [
+            obj_id for obj_id in non_carpet_obj_ids
+            if obj_id not in placeholder_ids
+        ]
+
         if carpet_ids:
             print(f"Excluding {len(carpet_ids)} carpet object(s) from collision check: {list(carpet_ids)}")
+
+        if placeholder_ids:
+            print(f"Excluding {len(placeholder_ids)} placeholder object(s) from collision check: {list(placeholder_ids)}")
 
         # Initialize the collision results (only for non-carpet objects)
         collision_results = {
@@ -160,7 +173,7 @@ class CollisionMetric(BaseMetric):
         overall_mean_depth = float(np.mean(all_max_depths)) if all_max_depths else 0.0
 
         result = MetricResult(
-            message=f"Scene is in collision: {scene_in_collision}, with {num_obj_in_collision}/{len(non_carpet_obj_ids)} objects in collision. Max depth: {overall_max_depth:.4f}m, {num_collision_pairs} collision pairs. ({len(carpet_ids)} carpets excluded)",
+            message=f"Scene is in collision: {scene_in_collision}, with {num_obj_in_collision}/{len(non_carpet_obj_ids)} objects in collision. Max depth: {overall_max_depth:.4f}m, {num_collision_pairs} collision pairs. ({len(carpet_ids)} carpets, {len(placeholder_ids)} placeholders excluded)",
             data={
                 "scene_in_collision": scene_in_collision,
                 "num_obj_in_collision": num_obj_in_collision,
@@ -171,6 +184,8 @@ class CollisionMetric(BaseMetric):
                 "collision_results": collision_results,
                 "excluded_carpet_ids": list(carpet_ids),
                 "num_excluded_carpets": len(carpet_ids),
+                "excluded_placeholder_ids": list(placeholder_ids),
+                "num_excluded_placeholders": len(placeholder_ids),
             }
         )
 

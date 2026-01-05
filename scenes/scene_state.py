@@ -25,6 +25,7 @@ class SceneState:
         self.objectFrontVector: list[float] = None
         self.architecture: Architecture = None
         self.objs: list[Obj] = None
+        self.source_path: pathlib.Path = None  # Path to the scene JSON file
 
         # Load the scene state dictionary if provided
         if source is not None:
@@ -43,9 +44,11 @@ class SceneState:
             with open(source, "r") as f:
                 scene_state_dict = json.load(f)
             self.name = source.stem
+            self.source_path = source.resolve()
         elif isinstance(source, dict):
             scene_state_dict = source
             self.name = f"scene_state@{time.strftime('%y%m%d-%H%M%S')}"
+            self.source_path = None
         
         self.raw_json = scene_state_dict
         

@@ -163,3 +163,124 @@ The conversion applies the transform:
 - Position: `(x, y, z)` → `(x, z, y)`
 - Rotation: `Euler(90, 0, 0) * Euler(x, -(y-180), -z)`
 - Scale: `(x, y, z)` → `(x, z, y)`
+
+---
+
+## Advanced: Door/Window Mesh Export (Optional)
+
+By default, Holodeck scenes use placeholder boxes for doors and windows in room renders. To export actual door/window 3D meshes for higher quality renders, you can build a modified version of ai2thor.
+
+### Prerequisites
+
+1. **Unity 2020.3.25f1** - Required to build ai2thor
+2. **Unity Pro License** - Required for batch mode builds (free license doesn't support `-batchmode`)
+3. **ai2thor source code** - Clone from GitHub
+4. **X Virtual Framebuffer** - For headless builds (`xvfb-run`)
+
+### Setup
+
+#### 1. Install Unity 2020.3.25f1
+
+Download and install Unity 2020.3.25f1 (the version ai2thor uses):
+```bash
+# Install Unity Hub first, then:
+unityhub --headless install --version 2020.3.25f1
+
+# Or download directly from Unity archive:
+# https://unity.com/releases/editor/archive
+```
+
+#### 2. Activate Unity Pro License
+
+**Important**: Unity batch mode requires a Pro license. You must activate it before building:
+
+```bash
+# Replace with your Unity Pro credentials
+xvfb-run --auto-servernum /path/to/Unity -batchmode -quit \
+    -username "your_email@example.com" \
+    -password "your_password" \
+    -serial "XX-XXXX-XXXX-XXXX-XXXX-XXXX"
+```
+
+You can find your serial number in the Unity Hub under `Preferences > Licenses` or in your Unity account at https://id.unity.com.
+
+To verify license activation:
+```bash
+cat ~/.local/share/unity3d/Unity/Unity_lic.ulf
+```
+
+#### 3. Clone ai2thor
+```bash
+git clone https://github.com/allenai/ai2thor ~/ai2thor
+cd ~/ai2thor
+```
+
+#### 4. Apply the Patch
+Apply our patch to add the `ExportDoorWindowMeshes` action:
+```bash
+cd ~/ai2thor
+git apply /path/to/SceneEval/conversion/holodeck/ExportDoorWindowMeshes.cs.patch
+```
+
+#### 5. Build the Unity Player
+
+**Important**: Building ai2thor with all 150 floor plan scenes takes ~50 hours due to lightmap baking. Since we only need the `Procedural` scene for Holodeck conversion, use the `BUILD_SCENES` environment variable for a fast build (~1-2 minutes):
+
+```bash
+# Fast build - only Procedural scene (recommended)
+BUILD_SCENES="Procedural/Procedural" \
+UNITY_BUILD_NAME=~/ai2thor/unity/builds/thor-local-Linux64 \
+xvfb-run --auto-servernum /path/to/Unity -quit -batchmode \
+    -logFile ~/ai2thor/unity_build.log \
+    -projectpath ~/ai2thor/unity \
+    -buildTarget Linux64 \
+    -executeMethod Build.Linux64
+
+# Monitor build progress
+tail -f ~/ai2thor/unity_build.log
+```
+
+The build is complete when you see `Exiting batchmode successfully now!`
+
+**Why is this fast?** The `BUILD_SCENES` environment variable tells Unity to only include the specified scene(s) in the build, skipping lightmap baking for the other 149 floor plan scenes. For Holodeck conversion, we only need the `Procedural` scene which generates rooms dynamically.
+
+This creates the executable at `~/ai2thor/unity/builds/thor-local-Linux64`.
+
+### Running with Local Build
+
+Use the `--local_build` option to use your modified ai2thor:
+
+```bash
+# From Holodeck directory with its venv activated
+cd /path/to/Holodeck
+source .venv/bin/activate
+
+python /path/to/SceneEval/conversion/holodeck/convert_SceneEval_unity.py \
+    --input_dir /path/to/Holodeck/data/scenes \
+    --output_dir /path/to/SceneEval/input/Holodeck \
+    --local_build ~/ai2thor/unity/builds/thor-local-Linux64
+```
+
+When using `--local_build`, the script will:
+1. Call `ExportDoorWindowMeshes` after `CreateHouse`
+2. Save door/window OBJ files to `<output_dir>/assets/`
+3. These meshes will be loaded by SceneEval for room renders and GLB exports
+
+### Without Local Build
+
+If you don't build a local version, the conversion will still work but:
+- Room renders will show placeholder boxes for doors/windows
+- GLB exports will use placeholder geometry
+
+This is acceptable for most use cases since the placeholder boxes correctly represent door/window dimensions and positions.
+
+### Troubleshooting
+
+**"Scene 'Procedural' not contained in build"**
+- You built without the Procedural scene. Rebuild with `BUILD_SCENES="Procedural/Procedural"`
+
+**"Unity license required"**
+- Unity batch mode requires Pro license. See step 2 above.
+
+**Build takes very long time**
+- Make sure you're using `BUILD_SCENES="Procedural/Procedural"` to skip the 150 floor plan scenes.
