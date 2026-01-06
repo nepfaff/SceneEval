@@ -16,7 +16,7 @@ scene:
 
 blender:
   suppress_warning: False
-  render_engine: BLENDER_EEVEE_NEXT
+  render_engine: BLENDER_EEVEE
   taa_render_samples: 64
   use_raytracing: True
   raytracing_method: "PROBE"

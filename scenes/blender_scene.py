@@ -205,7 +205,7 @@ class BlenderConfig:
     
     suppress_warning: bool = False
 
-    render_engine: str = "BLENDER_EEVEE_NEXT"
+    render_engine: str = "BLENDER_EEVEE"
     taa_render_samples: int = 1024
     use_raytracing: bool = True
     raytracing_method: str = "PROBE"
