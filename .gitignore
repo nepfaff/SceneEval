@@ -180,3 +180,4 @@ logs
 !input/hotel_room_1k.exr
 !input/CREDITS.txt
 !docs/static/images/*.png
+node_modules/

@@ -2,6 +2,9 @@ import logging
 import warnings
 import pathlib
 import json
+import subprocess
+import tempfile
+import shutil
 import bpy
 import shapely
 import numpy as np
@@ -9,6 +12,60 @@ from dataclasses import dataclass, field
 from mathutils import Vector, Matrix
 
 logger = logging.getLogger(__name__)
+
+
+def _check_glb_has_basisu(file_path: pathlib.Path) -> bool:
+    """Check if a GLB file uses KHR_texture_basisu extension."""
+    try:
+        with open(file_path, 'rb') as f:
+            # Read first 100KB to check for the extension string
+            header = f.read(100000)
+            return b'KHR_texture_basisu' in header
+    except Exception:
+        return False
+
+
+def _convert_basisu_glb(file_path: pathlib.Path) -> pathlib.Path:
+    """
+    Convert a GLB with KHR_texture_basisu to standard textures using gltf-transform.
+    Returns path to converted file (cached in same directory with _converted suffix).
+    """
+    converted_path = file_path.with_stem(file_path.stem + "_converted")
+
+    # Return cached conversion if it exists and is newer than source
+    if converted_path.exists():
+        if converted_path.stat().st_mtime >= file_path.stat().st_mtime:
+            return converted_path
+
+    logger.info(f"Converting basisu textures in {file_path.name}")
+
+    try:
+        # Use gltf-transform ktxdecompress to decode KTX2/basisu textures to PNG
+        result = subprocess.run(
+            ['npx', 'gltf-transform', 'ktxdecompress', str(file_path), str(converted_path)],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            cwd=pathlib.Path(__file__).parent.parent  # SceneEval root where node_modules is
+        )
+
+        if result.returncode != 0:
+            logger.warning(f"gltf-transform ktxdecompress failed: {result.stderr}")
+            # Fall back to original file
+            return file_path
+
+        logger.info(f"Converted {file_path.name} -> {converted_path.name}")
+        return converted_path
+
+    except subprocess.TimeoutExpired:
+        logger.warning(f"gltf-transform timed out for {file_path}")
+        return file_path
+    except FileNotFoundError:
+        logger.warning("gltf-transform (npx) not found, skipping basisu conversion")
+        return file_path
+    except Exception as e:
+        logger.warning(f"Failed to convert basisu: {e}")
+        return file_path
 
 
 def _load_door_window_transforms(scene_source_path: pathlib.Path) -> dict:
@@ -436,7 +493,11 @@ class BlenderScene:
         file_extension = file_path.suffix.lower()
         match file_extension:
             case ".glb" | ".gltf":
-                bpy.ops.import_scene.gltf(filepath=str(file_path))
+                # Check for KHR_texture_basisu and convert if needed (Blender doesn't support it)
+                import_path = file_path
+                if _check_glb_has_basisu(file_path):
+                    import_path = _convert_basisu_glb(file_path)
+                bpy.ops.import_scene.gltf(filepath=str(import_path))
             case ".obj":
                 bpy.ops.wm.obj_import(filepath=str(file_path.absolute()))
                 bpy.ops.object.join()
