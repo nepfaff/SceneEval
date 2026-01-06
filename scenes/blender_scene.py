@@ -26,7 +26,12 @@ def _load_door_window_transforms(scene_source_path: pathlib.Path) -> dict:
 
     # Look for assets directory next to scene JSON
     assets_dir = scene_source_path.parent / "assets"
-    transforms_file = assets_dir / "door_window_transforms.json"
+    scene_name = scene_source_path.stem  # e.g., "scene_106"
+
+    # Try scene-specific file first, then fall back to legacy filename
+    transforms_file = assets_dir / f"door_window_transforms_{scene_name}.json"
+    if not transforms_file.exists():
+        transforms_file = assets_dir / "door_window_transforms.json"
 
     if transforms_file.exists():
         with open(transforms_file, 'r') as f:
@@ -969,7 +974,11 @@ class BlenderScene:
                                     else:
                                         # Load OBJ file positioned at hole center (from JSON)
                                         assets_dir = self.scene_state.source_path.parent / "assets"
-                                        obj_file = assets_dir / f"{hole_id}.obj"
+                                        scene_name = self.scene_state.source_path.stem
+                                        # Try scene-specific file first, then fall back to legacy filename
+                                        obj_file = assets_dir / f"{scene_name}_{hole_id}.obj"
+                                        if not obj_file.exists():
+                                            obj_file = assets_dir / f"{hole_id}.obj"
                                         if obj_file.exists():
                                             try:
                                                 hole_obj = _import_door_window_obj(

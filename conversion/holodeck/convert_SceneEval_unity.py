@@ -285,6 +285,7 @@ def convert_scene(controller: Controller, scene_json_path: Path, output_path: Pa
 
     # Export door/window meshes if using local build with patched ai2thor
     if use_local_build:
+        scene_name = output_path.stem  # e.g., "scene_106"
         print("  Exporting door/window meshes...")
         event = controller.step(action="ExportDoorWindowMeshes")
         if event.metadata["lastActionSuccess"]:
@@ -300,7 +301,7 @@ def convert_scene(controller: Controller, scene_json_path: Path, output_path: Pa
                 for mesh_info in meshes:
                     obj_id = mesh_info["objectId"]
                     obj_data = mesh_info["objData"]
-                    obj_file = assets_dir / f"{obj_id}.obj"
+                    obj_file = assets_dir / f"{scene_name}_{obj_id}.obj"
                     with open(obj_file, 'w') as f:
                         f.write(obj_data)
 
@@ -313,7 +314,7 @@ def convert_scene(controller: Controller, scene_json_path: Path, output_path: Pa
                     }
 
                 # Save transforms JSON
-                transforms_file = assets_dir / "door_window_transforms.json"
+                transforms_file = assets_dir / f"door_window_transforms_{scene_name}.json"
                 with open(transforms_file, 'w') as f:
                     json.dump(transforms, f, indent=2)
 
@@ -333,8 +334,6 @@ def convert_scene(controller: Controller, scene_json_path: Path, output_path: Pa
                 import base64
                 assets_dir = output_path.parent / "assets"
                 assets_dir.mkdir(parents=True, exist_ok=True)
-                # Use scene-specific filename (e.g., architecture_106.glb for scene_106.json)
-                scene_name = output_path.stem  # e.g., "scene_106"
                 glb_file = assets_dir / f"architecture_{scene_name}.glb"
                 with open(glb_file, 'wb') as f:
                     f.write(base64.b64decode(glb_base64))
