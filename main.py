@@ -229,33 +229,6 @@ def _copy_and_render_original_sceneweaver_blend(scene: Scene, method_scene_file:
     cam.data.ortho_scale = scene_size * 1.3
     bpy.context.scene.camera = cam
 
-    # Add balanced lighting for good color reproduction
-    # 1. Sun light from above and slightly angled
-    sun_data = bpy.data.lights.new("RenderSun", 'SUN')
-    sun_data.energy = 2.0
-    sun = bpy.data.objects.new("RenderSun", sun_data)
-    bpy.context.scene.collection.objects.link(sun)
-    sun.location = (center_x, center_y, cam_height + 5)
-    sun.rotation_euler = (math.radians(45), math.radians(20), 0)
-
-    # 2. Area light for soft fill
-    area_data = bpy.data.lights.new("RenderArea", 'AREA')
-    area_data.energy = 200.0
-    area_data.size = scene_size
-    area = bpy.data.objects.new("RenderArea", area_data)
-    bpy.context.scene.collection.objects.link(area)
-    area.location = (center_x, center_y, cam_height - 1)
-    area.rotation_euler = (math.radians(180), 0, 0)  # Pointing down
-
-    # Set up world background with ambient light
-    if bpy.context.scene.world is None:
-        bpy.context.scene.world = bpy.data.worlds.new("World")
-    bpy.context.scene.world.use_nodes = True
-    bg_node = bpy.context.scene.world.node_tree.nodes.get("Background")
-    if bg_node:
-        bg_node.inputs['Color'].default_value = (0.9, 0.9, 0.9, 1.0)
-        bg_node.inputs['Strength'].default_value = 0.3
-
     # Render
     output_image = output_dir / "original_sceneweaver_render.png"
     bpy.context.scene.render.filepath = str(output_image)
@@ -357,33 +330,6 @@ def _copy_and_render_original_scene_agent_blend(scene: Scene, method_scene_file:
     cam.data.ortho_scale = scene_size * 1.3
     bpy.context.scene.camera = cam
 
-    # Add balanced lighting for good color reproduction
-    # 1. Sun light from above and slightly angled
-    sun_data = bpy.data.lights.new("RenderSun", 'SUN')
-    sun_data.energy = 2.0
-    sun = bpy.data.objects.new("RenderSun", sun_data)
-    bpy.context.scene.collection.objects.link(sun)
-    sun.location = (center_x, center_y, cam_height + 5)
-    sun.rotation_euler = (math.radians(45), math.radians(20), 0)
-
-    # 2. Area light for soft fill
-    area_data = bpy.data.lights.new("RenderArea", 'AREA')
-    area_data.energy = 200.0
-    area_data.size = scene_size
-    area = bpy.data.objects.new("RenderArea", area_data)
-    bpy.context.scene.collection.objects.link(area)
-    area.location = (center_x, center_y, cam_height - 1)
-    area.rotation_euler = (math.radians(180), 0, 0)  # Pointing down
-
-    # Set up world background with ambient light
-    if bpy.context.scene.world is None:
-        bpy.context.scene.world = bpy.data.worlds.new("World")
-    bpy.context.scene.world.use_nodes = True
-    bg_node = bpy.context.scene.world.node_tree.nodes.get("Background")
-    if bg_node:
-        bg_node.inputs['Color'].default_value = (0.9, 0.9, 0.9, 1.0)
-        bg_node.inputs['Strength'].default_value = 0.3
-
     # Render
     output_image = output_dir / "original_scene_agent_render.png"
     bpy.context.scene.render.filepath = str(output_image)
@@ -426,6 +372,7 @@ def _render_room_views_from_blend(
     blend_path: pathlib.Path,
     output_dir: pathlib.Path,
     hdri_path: pathlib.Path | None = None,
+    hdri_strength: float = 0.7,
     resolution: int = 512,
 ) -> None:
     """
@@ -435,6 +382,7 @@ def _render_room_views_from_blend(
         blend_path: Path to the original blend file.
         output_dir: Output directory for rendered images.
         hdri_path: Optional HDRI file for consistent lighting.
+        hdri_strength: Strength of the HDRI lighting (default 0.7).
         resolution: Render resolution (square).
     """
     import bpy
@@ -487,7 +435,7 @@ def _render_room_views_from_blend(
 
     # Set up HDRI lighting if provided
     if hdri_path and hdri_path.exists():
-        _setup_hdri_lighting(hdri_path)
+        _setup_hdri_lighting(hdri_path, strength=hdri_strength)
 
     # Find scene bounds from visible mesh objects
     min_coords = Vector((float('inf'), float('inf'), float('inf')))
@@ -518,6 +466,17 @@ def _render_room_views_from_blend(
     cam = bpy.data.objects.new("RoomViewCamera", cam_data)
     bpy.context.scene.collection.objects.link(cam)
     bpy.context.scene.camera = cam
+
+    # Remove all objects that are hidden in render (human model, walls, doors, windows, etc.)
+    objects_to_remove = [obj for obj in bpy.data.objects if obj.hide_render]
+    for obj in objects_to_remove:
+        print(f"  Removing hidden object: {obj.name}")
+        bpy.data.objects.remove(obj, do_unlink=True)
+
+    # Save the render-ready blend file (with HDRI and camera setup)
+    render_blend_path = output_dir / "scene.blend"
+    bpy.ops.wm.save_as_mainfile(filepath=str(render_blend_path))
+    print(f"  Saved render-ready blend to: {render_blend_path}")
 
     # Define views: 1 top + 8 side views
     views = [
@@ -588,8 +547,14 @@ def _render_room_views_from_blend(
     print(f"  Room views saved to: {room_views_dir}")
 
 
-def _setup_hdri_lighting(hdri_path: pathlib.Path, strength: float = 1.0) -> None:
-    """Set up HDRI environment lighting for consistent renders."""
+def _setup_hdri_lighting(hdri_path: pathlib.Path, strength: float = 1.0, pack_image: bool = True) -> None:
+    """Set up HDRI environment lighting for consistent renders.
+
+    Args:
+        hdri_path: Path to the HDRI file.
+        strength: Strength of the HDRI lighting.
+        pack_image: If True, embed the HDRI image in the blend file.
+    """
     import bpy
 
     world = bpy.context.scene.world
@@ -612,6 +577,10 @@ def _setup_hdri_lighting(hdri_path: pathlib.Path, strength: float = 1.0) -> None
     # Load HDRI
     env.image = bpy.data.images.load(str(hdri_path))
     bg.inputs['Strength'].default_value = strength
+
+    # Pack the HDRI image into the blend file so it stays when downloaded
+    if pack_image and env.image:
+        env.image.pack()
 
     # Connect nodes
     links.new(env.outputs['Color'], bg.inputs['Color'])
@@ -694,6 +663,7 @@ def _get_original_blend_path(method: str, method_scene_file: pathlib.Path) -> pa
 def _render_room_views_from_current_scene(
     output_dir: pathlib.Path,
     hdri_path: pathlib.Path | None = None,
+    hdri_strength: float = 0.7,
     resolution: int = 512,
 ) -> None:
     """
@@ -702,6 +672,7 @@ def _render_room_views_from_current_scene(
     Args:
         output_dir: Output directory for rendered images.
         hdri_path: Optional HDRI file for consistent lighting.
+        hdri_strength: Strength of the HDRI lighting (default 0.7).
         resolution: Render resolution (square).
     """
     import bpy
@@ -741,7 +712,7 @@ def _render_room_views_from_current_scene(
 
     # Set up HDRI lighting if provided
     if hdri_path and hdri_path.exists():
-        _setup_hdri_lighting(hdri_path)
+        _setup_hdri_lighting(hdri_path, strength=hdri_strength)
 
     # Find scene bounds from visible mesh objects
     min_coords = Vector((float('inf'), float('inf'), float('inf')))
@@ -774,6 +745,17 @@ def _render_room_views_from_current_scene(
         cam = bpy.data.objects.new("RoomViewCamera", cam_data)
         bpy.context.scene.collection.objects.link(cam)
     bpy.context.scene.camera = cam
+
+    # Remove all objects that are hidden in render (human model, walls, doors, windows, etc.)
+    objects_to_remove = [obj for obj in bpy.data.objects if obj.hide_render]
+    for obj in objects_to_remove:
+        print(f"  Removing hidden object: {obj.name}")
+        bpy.data.objects.remove(obj, do_unlink=True)
+
+    # Save the render-ready blend file (with HDRI and camera setup)
+    render_blend_path = output_dir / "scene.blend"
+    bpy.ops.wm.save_as_mainfile(filepath=str(render_blend_path))
+    print(f"  Saved render-ready blend to: {render_blend_path}")
 
     # Define views: 1 top + 8 side views
     views = [{"name": "room_0_top", "is_top": True, "azimuth": 0}]
@@ -1045,17 +1027,17 @@ def main(cfg: DictConfig) -> None:
 
                 # Render room views if requested
                 if evaluation_plan.render_cfg.normal_render_tasks and "room_views" in evaluation_plan.render_cfg.normal_render_tasks:
+                    hdri_path = pathlib.Path(evaluation_plan.render_cfg.hdri_path) if evaluation_plan.render_cfg.hdri_path else None
+                    hdri_strength = cfg.models[method].get("hdri_strength", 0.7)
                     if original_blend:
-                        print(f"  Rendering room views from: {original_blend}")
-                        hdri_path = pathlib.Path(evaluation_plan.render_cfg.hdri_path) if evaluation_plan.render_cfg.hdri_path else None
-                        _render_room_views_from_blend(original_blend, output_dir, hdri_path)
+                        print(f"  Rendering room views from: {original_blend} (hdri_strength={hdri_strength})")
+                        _render_room_views_from_blend(original_blend, output_dir, hdri_path, hdri_strength)
                         # Recreate scene after room view rendering
                         scene = Scene(mesh_retriever, scene_state, scene_cfg, blender_cfg, trimesh_cfg, output_dir)
                     else:
                         # No original blend - render from current Blender scene
-                        print(f"  Rendering room views from current scene for {method}")
-                        hdri_path = pathlib.Path(evaluation_plan.render_cfg.hdri_path) if evaluation_plan.render_cfg.hdri_path else None
-                        _render_room_views_from_current_scene(output_dir, hdri_path)
+                        print(f"  Rendering room views from current scene for {method} (hdri_strength={hdri_strength})")
+                        _render_room_views_from_current_scene(output_dir, hdri_path, hdri_strength)
 
                 # Export web-optimized GLB if requested
                 if evaluation_plan.render_cfg.export_web_glb:

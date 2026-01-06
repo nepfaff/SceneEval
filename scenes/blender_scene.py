@@ -562,8 +562,8 @@ class BlenderScene:
         converted_floor_loaded = False
         converted_walls_loaded = False
 
-        logger.info(f"use_converted_architecture: {self.scene_cfg.use_converted_architecture}")
-        if self.scene_cfg.use_converted_architecture and self.scene_state and self.scene_state.objs:
+        # Auto-detect GLB architecture based on model ID prefix (SceneWeaver, Holodeck)
+        if self.scene_state and self.scene_state.objs:
             # Check if this is a SceneWeaver scene by looking at object model IDs
             first_obj_model_id = self.scene_state.objs[0].model_id if self.scene_state.objs else None
             logger.info(f"first_obj_model_id: {first_obj_model_id}")
@@ -852,32 +852,39 @@ class BlenderScene:
                 # Check the element type
                 match element.type:
                     case "Floor":
+                        # Skip if floor already loaded from GLB
+                        if converted_floor_loaded:
+                            # Still need to compute floor polygon for wall facing direction
+                            floor_points = np.asarray(element.points)
+                            floor_polygon = shapely.geometry.Polygon(floor_points[..., :2])
+                            continue
+
                         floor_name = f"floor_{element.roomId.replace(' ', '_')}"
-                        
+
                         # Create a empty mesh and object
                         floor_mesh = bpy.data.meshes.new(floor_name)
                         floor = bpy.data.objects.new(floor_name, floor_mesh)
                         bpy.context.collection.objects.link(floor)
                         floor_name = floor.name
-                        
+
                         # Select the floor object
                         bpy.ops.object.select_all(action="DESELECT")
                         floor.select_set(True)
                         bpy.context.view_layer.objects.active = floor
-                        
+
                         # Gather the vertices and edges for the floor
                         floor_points = np.asarray(element.points)
                         floor_edges = [(i, i + 1) for i in range(len(floor_points) - 1)] + [(len(floor_points) - 1, 0)]
-                        
+
                         # Add the vertices and edges to the mesh
                         floor_mesh.from_pydata(floor_points, floor_edges, [])
                         floor_mesh.update()
-                        
+
                         # Fill in the faces
                         bpy.ops.object.mode_set(mode="EDIT")
                         bpy.ops.mesh.fill()
                         bpy.ops.object.mode_set(mode="OBJECT")
-                        
+
                         # Translate the floor to the correct height
                         floor.location = (0, 0, floor_height)
 
@@ -894,8 +901,12 @@ class BlenderScene:
                         pass
                     
                     case "Wall":
+                        # Skip if walls already loaded from GLB (includes doors/windows with materials)
+                        if converted_walls_loaded:
+                            continue
+
                         # Skip exterior walls (duplicates of interior walls, facing outward)
-                        if "exterior" in element.id:
+                        if "exterior" in str(element.id):
                             continue
 
                         wall_name = f"wall_{element.id}"
