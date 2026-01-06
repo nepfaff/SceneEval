@@ -14,6 +14,7 @@ import hashlib
 import logging
 import bpy
 import bmesh
+import mathutils
 import numpy as np
 from pathlib import Path
 
@@ -450,10 +451,61 @@ def optimize_scene_for_web(
     return stats
 
 
+def center_scene_at_origin() -> tuple[float, float, float]:
+    """Move the scene so its bounding box center is at the world origin.
+
+    This improves navigation in GLB viewers by ensuring the camera orbits
+    around the scene center rather than a potentially offset point.
+
+    Returns:
+        The offset that was applied (original center position).
+    """
+    # Find all visible mesh objects
+    visible_objects = [
+        obj for obj in bpy.data.objects
+        if obj.type == "MESH" and obj.visible_get() and not obj.hide_render
+    ]
+
+    if not visible_objects:
+        logger.warning("No visible mesh objects to center")
+        return (0.0, 0.0, 0.0)
+
+    # Calculate combined bounding box
+    min_corner = [float("inf")] * 3
+    max_corner = [float("-inf")] * 3
+
+    for obj in visible_objects:
+        # Get world-space bounding box corners
+        bbox_corners = [obj.matrix_world @ mathutils.Vector(corner) for corner in obj.bound_box]
+        for corner in bbox_corners:
+            for i in range(3):
+                min_corner[i] = min(min_corner[i], corner[i])
+                max_corner[i] = max(max_corner[i], corner[i])
+
+    # Calculate center
+    center = mathutils.Vector([
+        (min_corner[i] + max_corner[i]) / 2
+        for i in range(3)
+    ])
+
+    if center.length < 0.001:
+        logger.info("Scene already centered at origin")
+        return (0.0, 0.0, 0.0)
+
+    # Move all root-level objects (those without parents)
+    root_objects = [obj for obj in bpy.data.objects if obj.parent is None]
+    for obj in root_objects:
+        obj.location -= center
+
+    logger.info(f"Centered scene at origin (offset: {center.x:.2f}, {center.y:.2f}, {center.z:.2f})")
+    return (center.x, center.y, center.z)
+
+
 def export_optimized_glb(
     output_path: Path,
     use_draco: bool = True,
     draco_compression_level: int = 6,
+    center_scene: bool = True,
 ) -> bool:
     """Export scene as optimized GLB file.
 
@@ -461,11 +513,16 @@ def export_optimized_glb(
         output_path: Output file path.
         use_draco: Enable Draco mesh compression.
         draco_compression_level: Draco compression level (0-10).
+        center_scene: Center scene at world origin before export.
 
     Returns:
         True if export succeeded.
     """
     try:
+        # Center scene at origin for better navigation in GLB viewers
+        if center_scene:
+            center_scene_at_origin()
+
         bpy.ops.export_scene.gltf(
             filepath=str(output_path),
             export_format="GLB",

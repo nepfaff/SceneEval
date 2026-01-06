@@ -138,7 +138,7 @@ def _render_scene(scene: Scene, render_tasks: list[str]) -> None:
                 pass
 
 
-def _copy_and_render_original_sceneweaver_blend(scene: Scene, method_scene_file: pathlib.Path, output_dir: pathlib.Path) -> None:
+def _copy_and_render_original_sceneweaver_blend(scene: Scene, method_scene_file: pathlib.Path, output_dir: pathlib.Path, resolution: int = 512) -> None:
     """
     Copy the original SceneWeaver blend file to output and render from it.
 
@@ -179,8 +179,8 @@ def _copy_and_render_original_sceneweaver_blend(scene: Scene, method_scene_file:
     bpy.context.scene.render.engine = 'CYCLES'
     bpy.context.scene.cycles.device = 'CPU'
     bpy.context.scene.cycles.samples = 128
-    bpy.context.scene.render.resolution_x = 512
-    bpy.context.scene.render.resolution_y = 512
+    bpy.context.scene.render.resolution_x = resolution
+    bpy.context.scene.render.resolution_y = resolution
     bpy.context.scene.render.film_transparent = True
 
     # Hide room enclosure meshes and placeholder/bounding box objects
@@ -242,7 +242,7 @@ def _copy_and_render_original_sceneweaver_blend(scene: Scene, method_scene_file:
         bpy.ops.wm.read_homefile()
 
 
-def _copy_and_render_original_scene_agent_blend(scene: Scene, method_scene_file: pathlib.Path, output_dir: pathlib.Path) -> None:
+def _copy_and_render_original_scene_agent_blend(scene: Scene, method_scene_file: pathlib.Path, output_dir: pathlib.Path, resolution: int = 512) -> None:
     """
     Copy the original Scene Agent blend file to output and render from it.
 
@@ -283,8 +283,8 @@ def _copy_and_render_original_scene_agent_blend(scene: Scene, method_scene_file:
     bpy.context.scene.render.engine = 'CYCLES'
     bpy.context.scene.cycles.device = 'CPU'
     bpy.context.scene.cycles.samples = 128
-    bpy.context.scene.render.resolution_x = 512
-    bpy.context.scene.render.resolution_y = 512
+    bpy.context.scene.render.resolution_x = resolution
+    bpy.context.scene.render.resolution_y = resolution
     bpy.context.scene.render.film_transparent = True
 
     # Find scene bounds from all mesh objects
@@ -1009,14 +1009,14 @@ def main(cfg: DictConfig) -> None:
                 # For SceneWeaver: Copy and render original blend file for comparison
                 # (GLB exports have texture baking issues, original blend has perfect materials)
                 if method == "SceneWeaver":
-                    _copy_and_render_original_sceneweaver_blend(scene, method_scene_file, output_dir)
+                    _copy_and_render_original_sceneweaver_blend(scene, method_scene_file, output_dir, resolution=blender_cfg.resolution_x)
                     # Recreate scene after rendering original blend - the bpy.ops.wm.open_mainfile()
                     # call invalidates all Blender object references in the Scene object
                     scene = Scene(mesh_retriever, scene_state, scene_cfg, blender_cfg, trimesh_cfg, output_dir)
 
                 # For SceneAgent: Copy and render original blend file for comparison
                 if method == "SceneAgent":
-                    _copy_and_render_original_scene_agent_blend(scene, method_scene_file, output_dir)
+                    _copy_and_render_original_scene_agent_blend(scene, method_scene_file, output_dir, resolution=blender_cfg.resolution_x)
                     # Recreate scene after rendering original blend
                     scene = Scene(mesh_retriever, scene_state, scene_cfg, blender_cfg, trimesh_cfg, output_dir)
 
@@ -1032,14 +1032,14 @@ def main(cfg: DictConfig) -> None:
                     hdri_path = pathlib.Path(evaluation_plan.render_cfg.hdri_path) if evaluation_plan.render_cfg.hdri_path else None
                     hdri_strength = cfg.models[method].get("hdri_strength", 0.7)
                     if original_blend:
-                        print(f"  Rendering room views from: {original_blend} (hdri_strength={hdri_strength})")
-                        _render_room_views_from_blend(original_blend, output_dir, hdri_path, hdri_strength)
+                        print(f"  Rendering room views from: {original_blend} (hdri_strength={hdri_strength}, resolution={blender_cfg.resolution_x})")
+                        _render_room_views_from_blend(original_blend, output_dir, hdri_path, hdri_strength, resolution=blender_cfg.resolution_x)
                         # Recreate scene after room view rendering
                         scene = Scene(mesh_retriever, scene_state, scene_cfg, blender_cfg, trimesh_cfg, output_dir)
                     else:
                         # No original blend - render from current Blender scene
-                        print(f"  Rendering room views from current scene for {method} (hdri_strength={hdri_strength})")
-                        _render_room_views_from_current_scene(output_dir, hdri_path, hdri_strength)
+                        print(f"  Rendering room views from current scene for {method} (hdri_strength={hdri_strength}, resolution={blender_cfg.resolution_x})")
+                        _render_room_views_from_current_scene(output_dir, hdri_path, hdri_strength, resolution=blender_cfg.resolution_x)
 
                 # Export web-optimized GLB if requested
                 if evaluation_plan.render_cfg.export_web_glb:
