@@ -46,7 +46,7 @@ class HSSDAssetDataset(BaseAssetDataset):
             file_path = self.root_dir / "glb" / asset_id[0] / f"{asset_id}.glb"
         else:
             non_part_model_id = asset_id.split("_")[0]
-            file_path = self.root_dir / "decomposed" / non_part_model_id / f"{asset_id}.glb"
+            file_path = self.root_dir / "objects" / "decomposed" / non_part_model_id / f"{asset_id}.glb"
         
         if not file_path.exists():
             raise FileNotFoundError(f"Asset file {file_path} not found.")

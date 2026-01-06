@@ -429,6 +429,7 @@ def _render_room_views_from_blend(
         bpy.context.scene.cycles.device = 'CPU'
     bpy.context.scene.cycles.samples = 128
     bpy.context.scene.cycles.use_denoising = True
+    bpy.context.scene.render.use_persistent_data = True  # Keep BVH/textures in memory for multiple renders
     bpy.context.scene.render.resolution_x = resolution
     bpy.context.scene.render.resolution_y = resolution
     bpy.context.scene.render.film_transparent = True
@@ -706,6 +707,7 @@ def _render_room_views_from_current_scene(
         bpy.context.scene.cycles.device = 'CPU'
     bpy.context.scene.cycles.samples = 128
     bpy.context.scene.cycles.use_denoising = True
+    bpy.context.scene.render.use_persistent_data = True  # Keep BVH/textures in memory for multiple renders
     bpy.context.scene.render.resolution_x = resolution
     bpy.context.scene.render.resolution_y = resolution
     bpy.context.scene.render.film_transparent = True
