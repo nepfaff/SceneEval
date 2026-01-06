@@ -11,6 +11,11 @@
 #   ./scripts/render_all_methods.sh 512       # 512x512 for faster testing
 #   ./scripts/render_all_methods.sh 2048      # High resolution
 #
+# GPU Distribution:
+#   If multiple GPUs are detected, methods are assigned GPUs in round-robin
+#   fashion (at most one GPU per method). If there are more methods than GPUs,
+#   GPUs are reused across methods.
+#
 # Output:
 #   Each method renders to its configured output directory
 #   Worker logs saved to logs/render_<timestamp>/
@@ -38,6 +43,24 @@ METHODS=(
 )
 
 # Resolution is appended to output dirs: output_eval/render_sceneweaver_1024
+
+# ============================================
+# GPU DETECTION
+# ============================================
+
+# Detect available GPUs (silently, output shown in validation section)
+if command -v nvidia-smi &> /dev/null; then
+    GPU_COUNT=$(nvidia-smi --query-gpu=index --format=csv,noheader 2>/dev/null | wc -l)
+    if [ "$GPU_COUNT" -gt 0 ]; then
+        GPU_IDS=($(nvidia-smi --query-gpu=index --format=csv,noheader 2>/dev/null))
+    else
+        GPU_COUNT=0
+        GPU_IDS=()
+    fi
+else
+    GPU_COUNT=0
+    GPU_IDS=()
+fi
 
 # ============================================
 # SETUP
@@ -109,11 +132,17 @@ echo "Multi-Method Parallel Rendering"
 echo "========================================"
 echo "Run ID: $RUN_ID"
 echo "Resolution: ${RESOLUTION}x${RESOLUTION}"
+if [ "$GPU_COUNT" -gt 0 ]; then
+    echo "GPUs: $GPU_COUNT available (IDs: ${GPU_IDS[*]})"
+else
+    echo "GPUs: None (CPU rendering)"
+fi
 echo "Log directory: $LOG_DIR"
 echo ""
 echo "Methods to render:"
 
 VALID_METHODS=()
+PREVIEW_GPU_INDEX=0
 for entry in "${METHODS[@]}"; do
     METHOD="${entry%%:*}"
     OUTPUT_DIR="${entry##*:}"
@@ -121,7 +150,13 @@ for entry in "${METHODS[@]}"; do
 
     if [ -d "$INPUT_DIR" ]; then
         SCENE_COUNT=$(ls "$INPUT_DIR"/scene_*.json 2>/dev/null | wc -l)
-        echo "  - $METHOD: $SCENE_COUNT scenes -> ${OUTPUT_DIR}_${RESOLUTION}"
+        if [ "$GPU_COUNT" -gt 0 ]; then
+            PREVIEW_GPU="${GPU_IDS[$PREVIEW_GPU_INDEX]}"
+            echo "  - $METHOD: $SCENE_COUNT scenes -> ${OUTPUT_DIR}_${RESOLUTION} [GPU $PREVIEW_GPU]"
+            PREVIEW_GPU_INDEX=$(( (PREVIEW_GPU_INDEX + 1) % GPU_COUNT ))
+        else
+            echo "  - $METHOD: $SCENE_COUNT scenes -> ${OUTPUT_DIR}_${RESOLUTION}"
+        fi
         VALID_METHODS+=("$entry")
     else
         echo "  - $METHOD: SKIPPED (no input directory)"
@@ -153,14 +188,25 @@ echo ""
 echo "Launching workers..."
 echo ""
 
+GPU_INDEX=0
 for entry in "${VALID_METHODS[@]}"; do
     METHOD="${entry%%:*}"
     OUTPUT_DIR="${entry##*:}"
 
     FULL_OUTPUT_DIR="${OUTPUT_DIR}_${RESOLUTION}"
-    echo "Starting: $METHOD -> $FULL_OUTPUT_DIR"
 
-    .venv/bin/python main.py \
+    # Assign GPU in round-robin fashion if GPUs are available
+    if [ "$GPU_COUNT" -gt 0 ]; then
+        ASSIGNED_GPU="${GPU_IDS[$GPU_INDEX]}"
+        GPU_ENV="CUDA_VISIBLE_DEVICES=$ASSIGNED_GPU"
+        echo "Starting: $METHOD -> $FULL_OUTPUT_DIR (GPU $ASSIGNED_GPU)"
+        GPU_INDEX=$(( (GPU_INDEX + 1) % GPU_COUNT ))
+    else
+        GPU_ENV=""
+        echo "Starting: $METHOD -> $FULL_OUTPUT_DIR (CPU)"
+    fi
+
+    env $GPU_ENV .venv/bin/python main.py \
         evaluation_plan=room_views_plan \
         "evaluation_plan.input_cfg.scene_methods=[$METHOD]" \
         'evaluation_plan.input_cfg.scene_mode=all' \
