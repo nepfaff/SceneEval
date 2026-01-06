@@ -39,9 +39,27 @@ class DrakeCollisionMetricConfigVHACD:
 
     Attributes:
         penetration_threshold: Minimum penetration depth to report (meters).
+        vhacd_max_convex_hulls: Maximum number of convex hulls (default 128).
+        vhacd_resolution: Voxel resolution for decomposition (default 400000).
+        vhacd_max_recursion_depth: Maximum recursion depth (default 10).
+        vhacd_max_num_vertices_per_ch: Max vertices per convex hull (default 64).
+        vhacd_min_volume_percent_error: Min volume error percent to stop (default 1.0).
+        vhacd_shrink_wrap: Enable shrink wrap (default True).
+        vhacd_fill_mode: Fill mode - "flood", "surface", or "raycast" (default "flood").
+        vhacd_min_edge_length: Minimum edge length (default 2).
+        vhacd_find_best_plane: Find best plane (default False).
     """
 
     penetration_threshold: float = 0.001
+    vhacd_max_convex_hulls: int = 128
+    vhacd_resolution: int = 400000
+    vhacd_max_recursion_depth: int = 10
+    vhacd_max_num_vertices_per_ch: int = 64
+    vhacd_min_volume_percent_error: float = 1.0
+    vhacd_shrink_wrap: bool = True
+    vhacd_fill_mode: str = "flood"
+    vhacd_min_edge_length: int = 2
+    vhacd_find_best_plane: bool = False
 
 
 class DrakeCollisionMetricBase(BaseMetric):
@@ -82,7 +100,17 @@ class DrakeCollisionMetricBase(BaseMetric):
 
         # Get coacd_threshold if applicable.
         coacd_threshold = getattr(self.cfg, "coacd_threshold", 0.05)
-        vhacd_max_convex_hulls = getattr(self.cfg, "vhacd_max_convex_hulls", 64)
+
+        # Get all VHACD parameters.
+        vhacd_max_convex_hulls = getattr(self.cfg, "vhacd_max_convex_hulls", 128)
+        vhacd_resolution = getattr(self.cfg, "vhacd_resolution", 400000)
+        vhacd_max_recursion_depth = getattr(self.cfg, "vhacd_max_recursion_depth", 10)
+        vhacd_max_num_vertices_per_ch = getattr(self.cfg, "vhacd_max_num_vertices_per_ch", 64)
+        vhacd_min_volume_percent_error = getattr(self.cfg, "vhacd_min_volume_percent_error", 1.0)
+        vhacd_shrink_wrap = getattr(self.cfg, "vhacd_shrink_wrap", True)
+        vhacd_fill_mode = getattr(self.cfg, "vhacd_fill_mode", "flood")
+        vhacd_min_edge_length = getattr(self.cfg, "vhacd_min_edge_length", 2)
+        vhacd_find_best_plane = getattr(self.cfg, "vhacd_find_best_plane", False)
 
         # Create Drake plant (time_step=0 for static collision query).
         builder, plant, scene_graph, obj_id_to_model_name = create_drake_plant_from_scene(
@@ -92,6 +120,14 @@ class DrakeCollisionMetricBase(BaseMetric):
             weld_to_world=[],
             coacd_threshold=coacd_threshold,
             vhacd_max_convex_hulls=vhacd_max_convex_hulls,
+            vhacd_resolution=vhacd_resolution,
+            vhacd_max_recursion_depth=vhacd_max_recursion_depth,
+            vhacd_max_num_vertices_per_ch=vhacd_max_num_vertices_per_ch,
+            vhacd_min_volume_percent_error=vhacd_min_volume_percent_error,
+            vhacd_shrink_wrap=vhacd_shrink_wrap,
+            vhacd_fill_mode=vhacd_fill_mode,
+            vhacd_min_edge_length=vhacd_min_edge_length,
+            vhacd_find_best_plane=vhacd_find_best_plane,
             decomposition_method=self.decomposition_method,
         )
 

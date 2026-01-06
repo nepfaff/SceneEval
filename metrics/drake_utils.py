@@ -177,27 +177,54 @@ def generate_collision_geometry(
 
 
 def generate_collision_geometry_vhacd(
-    mesh: trimesh.Trimesh, max_convex_hulls: int = 32, **kwargs
+    mesh: trimesh.Trimesh,
+    max_convex_hulls: int = 128,
+    resolution: int = 400000,
+    max_recursion_depth: int = 10,
+    max_num_vertices_per_ch: int = 64,
+    min_volume_percent_error: float = 1.0,
+    shrink_wrap: bool = True,
+    fill_mode: str = "flood",
+    min_edge_length: int = 2,
+    find_best_plane: bool = False,
 ) -> list[trimesh.Trimesh]:
     """Generate convex decomposition collision geometry using VHACD.
 
     Args:
         mesh: Input mesh to decompose.
-        max_convex_hulls: Maximum number of convex hulls to generate (default 32).
-        **kwargs: Additional kwargs passed to trimesh.convex_decomposition().
+        max_convex_hulls: Maximum number of convex hulls to generate (default 128).
+        resolution: Voxel resolution for decomposition (default 400000).
+        max_recursion_depth: Maximum recursion depth (default 10).
+        max_num_vertices_per_ch: Maximum vertices per convex hull (default 64).
+        min_volume_percent_error: Minimum volume error percent to stop (default 1.0).
+        shrink_wrap: Enable shrink wrap (default True).
+        fill_mode: Fill mode - "flood", "surface", or "raycast" (default "flood").
+        min_edge_length: Minimum edge length (default 2).
+        find_best_plane: Find best plane (default False).
 
     Returns:
         List of convex mesh pieces from the decomposition.
         Falls back to convex hull if VHACD fails.
     """
-    console_logger.info("Generating collision geometry with VHACD")
+    console_logger.info(
+        f"Generating collision geometry with VHACD (max_hulls={max_convex_hulls}, "
+        f"resolution={resolution})"
+    )
 
     try:
         start_time = time.time()
 
         # Use trimesh's convex_decomposition which uses vhacdx.
         convex_pieces = mesh.convex_decomposition(
-            maxConvexHulls=max_convex_hulls, **kwargs
+            maxConvexHulls=max_convex_hulls,
+            resolution=resolution,
+            maxRecursionDepth=max_recursion_depth,
+            maxNumVerticesPerCH=max_num_vertices_per_ch,
+            minimumVolumePercentErrorAllowed=min_volume_percent_error,
+            shrinkWrap=shrink_wrap,
+            fillMode=fill_mode,
+            minEdgeLength=min_edge_length,
+            findBestPlane=find_best_plane,
         )
 
         # Ensure result is a list.
@@ -444,7 +471,15 @@ def generate_sdf_from_trimesh(
     name: str,
     mass: float = 1.0,
     coacd_threshold: float = 0.05,
-    vhacd_max_convex_hulls: int = 64,
+    vhacd_max_convex_hulls: int = 128,
+    vhacd_resolution: int = 400000,
+    vhacd_max_recursion_depth: int = 10,
+    vhacd_max_num_vertices_per_ch: int = 64,
+    vhacd_min_volume_percent_error: float = 1.0,
+    vhacd_shrink_wrap: bool = True,
+    vhacd_fill_mode: str = "flood",
+    vhacd_min_edge_length: int = 2,
+    vhacd_find_best_plane: bool = False,
     decomposition_method: Literal["coacd", "vhacd"] = "coacd",
     hydroelastic_modulus: float | None = None,
     hunt_crossley_dissipation: float | None = None,
@@ -466,7 +501,15 @@ def generate_sdf_from_trimesh(
         name: Name for the asset (used in filenames and model name).
         mass: Mass in kg (default 1.0).
         coacd_threshold: CoACD approximation threshold (only used for coacd).
-        vhacd_max_convex_hulls: Maximum number of convex hulls for VHACD (default 64).
+        vhacd_max_convex_hulls: Maximum number of convex hulls for VHACD (default 128).
+        vhacd_resolution: VHACD voxel resolution (default 400000).
+        vhacd_max_recursion_depth: VHACD max recursion depth (default 10).
+        vhacd_max_num_vertices_per_ch: VHACD max vertices per convex hull (default 64).
+        vhacd_min_volume_percent_error: VHACD min volume error percent (default 1.0).
+        vhacd_shrink_wrap: VHACD enable shrink wrap (default True).
+        vhacd_fill_mode: VHACD fill mode (default "flood").
+        vhacd_min_edge_length: VHACD min edge length (default 2).
+        vhacd_find_best_plane: VHACD find best plane (default False).
         decomposition_method: Convex decomposition method ("coacd" or "vhacd").
         hydroelastic_modulus: If set, adds compliant hydroelastic properties
             with this modulus (Pa). If None, no hydroelastic properties are added.
@@ -483,7 +526,16 @@ def generate_sdf_from_trimesh(
     # Generate collision geometry using specified method.
     if decomposition_method == "vhacd":
         collision_pieces = generate_collision_geometry_vhacd(
-            mesh, max_convex_hulls=vhacd_max_convex_hulls
+            mesh,
+            max_convex_hulls=vhacd_max_convex_hulls,
+            resolution=vhacd_resolution,
+            max_recursion_depth=vhacd_max_recursion_depth,
+            max_num_vertices_per_ch=vhacd_max_num_vertices_per_ch,
+            min_volume_percent_error=vhacd_min_volume_percent_error,
+            shrink_wrap=vhacd_shrink_wrap,
+            fill_mode=vhacd_fill_mode,
+            min_edge_length=vhacd_min_edge_length,
+            find_best_plane=vhacd_find_best_plane,
         )
     else:
         collision_pieces = generate_collision_geometry(mesh, threshold=coacd_threshold)
@@ -726,7 +778,15 @@ def create_drake_plant_from_scene(
     weld_to_world: list[str] | None = None,
     mass: float = 1.0,
     coacd_threshold: float = 0.05,
-    vhacd_max_convex_hulls: int = 64,
+    vhacd_max_convex_hulls: int = 128,
+    vhacd_resolution: int = 400000,
+    vhacd_max_recursion_depth: int = 10,
+    vhacd_max_num_vertices_per_ch: int = 64,
+    vhacd_min_volume_percent_error: float = 1.0,
+    vhacd_shrink_wrap: bool = True,
+    vhacd_fill_mode: str = "flood",
+    vhacd_min_edge_length: int = 2,
+    vhacd_find_best_plane: bool = False,
     decomposition_method: Literal["coacd", "vhacd"] = "coacd",
     hydroelastic_modulus: float | None = None,
     hunt_crossley_dissipation: float | None = None,
@@ -746,7 +806,15 @@ def create_drake_plant_from_scene(
         weld_to_world: List of object IDs to weld to world (make static).
         mass: Mass in kg for all objects (default 1.0).
         coacd_threshold: CoACD approximation threshold (only used for coacd).
-        vhacd_max_convex_hulls: Maximum number of convex hulls for VHACD (default 64).
+        vhacd_max_convex_hulls: Maximum number of convex hulls for VHACD (default 128).
+        vhacd_resolution: VHACD voxel resolution (default 400000).
+        vhacd_max_recursion_depth: VHACD max recursion depth (default 10).
+        vhacd_max_num_vertices_per_ch: VHACD max vertices per convex hull (default 64).
+        vhacd_min_volume_percent_error: VHACD min volume error percent (default 1.0).
+        vhacd_shrink_wrap: VHACD enable shrink wrap (default True).
+        vhacd_fill_mode: VHACD fill mode (default "flood").
+        vhacd_min_edge_length: VHACD min edge length (default 2).
+        vhacd_find_best_plane: VHACD find best plane (default False).
         decomposition_method: Convex decomposition method ("coacd" or "vhacd").
         hydroelastic_modulus: If set, adds compliant hydroelastic properties
             with this modulus (Pa). If None, no hydroelastic properties are added.
@@ -814,6 +882,14 @@ def create_drake_plant_from_scene(
                 mass=mass,
                 coacd_threshold=coacd_threshold,
                 vhacd_max_convex_hulls=vhacd_max_convex_hulls,
+                vhacd_resolution=vhacd_resolution,
+                vhacd_max_recursion_depth=vhacd_max_recursion_depth,
+                vhacd_max_num_vertices_per_ch=vhacd_max_num_vertices_per_ch,
+                vhacd_min_volume_percent_error=vhacd_min_volume_percent_error,
+                vhacd_shrink_wrap=vhacd_shrink_wrap,
+                vhacd_fill_mode=vhacd_fill_mode,
+                vhacd_min_edge_length=vhacd_min_edge_length,
+                vhacd_find_best_plane=vhacd_find_best_plane,
                 decomposition_method=decomposition_method,
                 hydroelastic_modulus=hydroelastic_modulus,
                 hunt_crossley_dissipation=hunt_crossley_dissipation,

@@ -13,9 +13,9 @@ evaluation_cfg:
     - OutOfBoundMetric
     - OpeningClearanceMetric
     # Drake physics metrics (CoACD):
-    - DrakeCollisionMetricCoACD
-    - StaticEquilibriumMetricCoACD
-    - WeldedEquilibriumMetricCoACD
+    # - DrakeCollisionMetricCoACD
+    # - StaticEquilibriumMetricCoACD
+    # - WeldedEquilibriumMetricCoACD
     # Drake physics metrics (VHACD):
     - DrakeCollisionMetricVHACD
     - StaticEquilibriumMetricVHACD

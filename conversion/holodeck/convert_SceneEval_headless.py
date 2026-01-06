@@ -355,17 +355,20 @@ def main():
     print(f"Found {len(scene_jsons)} scenes to convert")
 
     # Convert each scene
-    for idx, scene_json in enumerate(scene_jsons):
-        # Determine output scene ID
-        if mapping and idx in mapping:
-            scene_id = mapping[idx]
+    for scene_json in scene_jsons:
+        # Extract source scene ID from directory name (e.g., "scene_000" -> 0)
+        scene_dir_name = scene_json.parent.parent.name
+        if scene_dir_name.startswith("scene_"):
+            src_scene_id = int(scene_dir_name.split("_")[1])
         else:
-            # Extract from directory name (e.g., scene_000 -> 0)
-            scene_dir_name = scene_json.parent.parent.name
-            if scene_dir_name.startswith("scene_"):
-                scene_id = int(scene_dir_name.split("_")[1])
-            else:
-                scene_id = idx
+            print(f"  Warning: Could not parse scene ID from {scene_dir_name}, skipping")
+            continue
+
+        # Use mapping if provided, otherwise use source scene ID
+        if mapping and src_scene_id in mapping:
+            scene_id = mapping[src_scene_id]
+        else:
+            scene_id = src_scene_id
 
         output_path = args.output_dir / f"scene_{scene_id}.json"
         convert_scene(scene_json, output_path)

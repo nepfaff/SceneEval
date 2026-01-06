@@ -160,17 +160,17 @@ def convert_single_scene(scene_dir: Path, target_dir: Path, scene_id: int) -> No
     with open(output_json_path, "w") as f:
         json.dump(scene_data, f, indent=2)
 
-    # Copy generated_assets from all found directories
+    # Copy generated_assets from all found directories (only sdf/, skip debug/images/geometry)
     for assets_path in assets_paths:
         for category in ["furniture", "manipuland", "wall_mounted", "ceiling_mounted"]:
-            category_src = assets_path / category
-            if category_src.exists():
-                category_dst = assets_output_dir / category
-                print(f"  Copying {assets_path.relative_to(scene_dir)}/{category}/ -> assets/{category}/")
-                if category_dst.exists():
+            sdf_src = assets_path / category / "sdf"
+            if sdf_src.exists():
+                sdf_dst = assets_output_dir / category / "sdf"
+                print(f"  Copying {assets_path.relative_to(scene_dir)}/{category}/sdf/ -> assets/{category}/sdf/")
+                if sdf_dst.exists():
                     # Merge instead of replace
-                    for item in category_src.iterdir():
-                        dst_item = category_dst / item.name
+                    for item in sdf_src.iterdir():
+                        dst_item = sdf_dst / item.name
                         if item.is_dir():
                             if dst_item.exists():
                                 shutil.rmtree(dst_item)
@@ -178,7 +178,7 @@ def convert_single_scene(scene_dir: Path, target_dir: Path, scene_id: int) -> No
                         else:
                             shutil.copy2(item, dst_item)
                 else:
-                    shutil.copytree(category_src, category_dst)
+                    shutil.copytree(sdf_src, sdf_dst)
 
     # Copy floor_plan.sdf if it exists
     floor_plan_path = find_floor_plan_sdf(scene_dir)
@@ -230,20 +230,25 @@ def convert_scene_agent_run(source_run_dir: Path, target_dir: Path, mapping: dic
         print(f"Mapping: {mapping}")
     print()
 
-    for idx, scene_dir in enumerate(scene_dirs):
-        # Use mapping if provided, otherwise extract scene ID from directory name
-        if mapping and str(idx) in mapping:
-            scene_id = mapping[str(idx)]
+    for scene_dir in scene_dirs:
+        # Extract source scene ID from directory name (e.g., "scene_002" -> 2)
+        dir_name = scene_dir.name
+        if dir_name.startswith("scene_"):
+            try:
+                src_scene_id = int(dir_name[6:])
+            except ValueError:
+                print(f"  Warning: Could not parse scene ID from {dir_name}, skipping")
+                continue
         else:
-            # Extract scene ID from directory name (e.g., "scene_002" -> 2)
-            dir_name = scene_dir.name
-            if dir_name.startswith("scene_"):
-                try:
-                    scene_id = int(dir_name[6:])
-                except ValueError:
-                    scene_id = idx
-            else:
-                scene_id = idx
+            print(f"  Warning: Unexpected directory name {dir_name}, skipping")
+            continue
+
+        # Use mapping if provided, otherwise use source scene ID
+        if mapping and str(src_scene_id) in mapping:
+            scene_id = mapping[str(src_scene_id)]
+        else:
+            scene_id = src_scene_id
+
         print(f"Converting {scene_dir.name} -> scene_{scene_id}...")
         convert_single_scene(scene_dir, target_dir, scene_id)
         print()
