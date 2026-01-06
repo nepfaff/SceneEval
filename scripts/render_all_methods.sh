@@ -31,6 +31,7 @@ METHODS=(
     "SceneAgent:output_eval/render_sceneagent_tmp"
     "Holodeck:output_eval/render_holodeck"
     "HSM:output_eval/render_hsm"
+    "HSM_hf:output_eval/render_hsm_hf"
     "LayoutVLM_Curated:output_eval/render_layoutvlm_curated"
     "LayoutVLM_Objaverse:output_eval/render_layoutvlm_objaverse"
     "IDesign:output_eval/render_idesign"

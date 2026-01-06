@@ -41,6 +41,13 @@ models:
       - hssd
     hdri_strength: 0.4  # Same as other methods for consistency (HSSD assets are inherently light)
 
+  HSM_hf:
+    input_dir_name: HSM_hf
+    output_dir_name: ${models.HSM_hf.input_dir_name}
+    asset_datasets:
+      - hssd
+    hdri_strength: 0.4  # Same as HSM
+
   LayoutVLM_Curated:
     input_dir_name: LayoutVLM_Curated
     output_dir_name: ${models.LayoutVLM_Curated.input_dir_name}
