@@ -1066,7 +1066,10 @@ def main(cfg: DictConfig) -> None:
         
         # Adjust whether to use simple architecture for all scenes of the method based on the evaluation plan
         scene_cfg.use_simple_architecture = method in evaluation_plan.input_cfg.method_use_simple_architecture
-        
+
+        # IDesign scenes may have missing assets - skip them with warning instead of failing
+        scene_cfg.skip_missing_obj = method == "IDesign"
+
         # Evaluate each scene for the method
         method_scene_files = scenes_per_method[method]
         for i, method_scene_file in enumerate(method_scene_files):

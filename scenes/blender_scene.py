@@ -476,15 +476,22 @@ class BlenderScene:
         self.update()
 
         # Get the object information from the mesh retriever
-        asset_info = self.retriever.get_asset_info(obj.model_id)
+        try:
+            asset_info = self.retriever.get_asset_info(obj.model_id)
+        except FileNotFoundError as e:
+            if skip_missing:
+                logger.warning(f"Skipping missing asset: {obj.model_id} - {e}")
+                return
+            else:
+                raise
         file_path = asset_info.file_path
         obj_description = asset_info.description
         extra_rotation_transform = asset_info.extra_rotation_transform
-        
+
         # Check if the object file exists
         if not file_path.is_file():
             if skip_missing:
-                warnings.warn(f"Object file '{file_path}' is missing.")
+                logger.warning(f"Object file '{file_path}' is missing.")
                 return
             else:
                 raise FileNotFoundError(f"Object file '{file_path}' is missing.")
