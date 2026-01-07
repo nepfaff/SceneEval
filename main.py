@@ -588,13 +588,55 @@ def _setup_hdri_lighting(hdri_path: pathlib.Path, strength: float = 1.0, pack_im
     links.new(bg.outputs['Background'], output.inputs['Surface'])
 
 
+def _export_clean_glb(output_path: pathlib.Path) -> bool:
+    """Export a clean GLB from Blender without optimization.
+
+    Only hides placeholder objects, no mesh/texture processing.
+    Optimization is done by gltf-transform afterwards.
+
+    Args:
+        output_path: Output GLB file path.
+
+    Returns:
+        True if export succeeded.
+    """
+    import bpy
+    from scenes.glb_optimization import hide_placeholder_objects
+
+    # Hide placeholder objects
+    hide_placeholder_objects()
+
+    try:
+        bpy.ops.export_scene.gltf(
+            filepath=str(output_path),
+            export_format="GLB",
+            export_draco_mesh_compression_enable=False,  # Will use gltf-transform
+            export_image_format="AUTO",
+            export_materials="EXPORT",
+            export_cameras=False,
+            export_lights=False,
+            use_visible=True,
+            use_renderable=True,
+            use_active_collection=False,
+            use_active_scene=True,
+        )
+        return True
+    except Exception as e:
+        print(f"  Failed to export clean GLB: {e}")
+        return False
+
+
 def _export_web_glb_from_blend(
     blend_path: pathlib.Path,
     output_dir: pathlib.Path,
     max_texture_size: int = 512,
 ) -> None:
     """
-    Export web-optimized GLB from a blend file.
+    Export web-optimized GLB from a blend file using gltf-transform.
+
+    Pipeline:
+    1. Export clean GLB from Blender (no optimization)
+    2. Run gltf-transform optimization (simplify, webp, draco)
 
     Args:
         blend_path: Path to the original blend file.
@@ -602,7 +644,7 @@ def _export_web_glb_from_blend(
         max_texture_size: Maximum texture dimension.
     """
     import bpy
-    from scenes.glb_optimization import optimize_scene_for_web, export_optimized_glb
+    from scenes.gltf_transform import optimize_glb
 
     if not blend_path.exists():
         print(f"  Blend file not found: {blend_path}")
@@ -615,25 +657,41 @@ def _export_web_glb_from_blend(
     # Hide SceneWeaver placeholder objects (if any)
     _hide_sceneweaver_placeholders()
 
-    # Apply optimizations
-    print(f"  Optimizing scene for web export...")
-    stats = optimize_scene_for_web(
-        max_texture_size=max_texture_size,
-        max_decimation_ratio=0.5,
-        convert_to_jpeg=True,
-    )
-    print(f"  Optimization stats: {stats}")
+    # Step 1: Export clean GLB from Blender
+    raw_glb_path = output_dir / "scene_web_raw.glb"
+    print(f"  Exporting clean GLB from Blender...")
+    if not _export_clean_glb(raw_glb_path):
+        print(f"  Failed to export clean GLB")
+        # Reload previous blend file
+        if current_blend:
+            bpy.ops.wm.open_mainfile(filepath=current_blend)
+        else:
+            bpy.ops.wm.read_homefile()
+        return
 
-    # Export GLB
+    raw_size_mb = raw_glb_path.stat().st_size / (1024 * 1024)
+    print(f"  Raw GLB size: {raw_size_mb:.2f} MB")
+
+    # Step 2: Optimize with gltf-transform
     glb_path = output_dir / "scene_web.glb"
-    success = export_optimized_glb(glb_path, use_draco=True)
+    print(f"  Optimizing with gltf-transform...")
+    stats = optimize_glb(
+        input_path=raw_glb_path,
+        output_path=glb_path,
+        max_texture_size=max_texture_size,
+        simplify_error=0.01,  # Aggressive: 1% max deviation
+        use_draco=True,
+        use_webp=True,
+        webp_quality=80,
+    )
 
-    if success:
-        # Report file size
-        size_mb = glb_path.stat().st_size / (1024 * 1024)
-        print(f"  Exported web GLB: {glb_path} ({size_mb:.2f} MB)")
+    if stats["success"]:
+        print(f"  Optimization complete:")
+        print(f"    Steps: {', '.join(stats['steps_completed'])}")
+        print(f"    Size: {stats['input_size_mb']:.2f} MB -> {stats['output_size_mb']:.2f} MB ({stats['reduction_percent']:.1f}% reduction)")
     else:
-        print(f"  Failed to export web GLB")
+        print(f"  Optimization failed: {stats['errors']}")
+        print(f"  Raw GLB available at: {raw_glb_path}")
 
     # Reload previous blend file
     if current_blend:
@@ -808,31 +866,48 @@ def _export_web_glb_from_current_scene(
     max_texture_size: int = 512,
 ) -> None:
     """
-    Export web-optimized GLB from the current Blender scene.
+    Export web-optimized GLB from the current Blender scene using gltf-transform.
+
+    Pipeline:
+    1. Export clean GLB from Blender (no optimization)
+    2. Run gltf-transform optimization (simplify, webp, draco)
 
     Args:
         output_dir: Output directory for the GLB file.
         max_texture_size: Maximum texture dimension.
     """
-    import bpy
-    from scenes.glb_optimization import optimize_scene_for_web, export_optimized_glb
+    from scenes.gltf_transform import optimize_glb
 
-    print(f"  Optimizing current scene for web export...")
-    stats = optimize_scene_for_web(
-        max_texture_size=max_texture_size,
-        max_decimation_ratio=0.5,
-        convert_to_jpeg=True,
-    )
-    print(f"  Optimization stats: {stats}")
+    # Step 1: Export clean GLB from Blender
+    raw_glb_path = output_dir / "scene_web_raw.glb"
+    print(f"  Exporting clean GLB from Blender...")
+    if not _export_clean_glb(raw_glb_path):
+        print(f"  Failed to export clean GLB")
+        return
 
+    raw_size_mb = raw_glb_path.stat().st_size / (1024 * 1024)
+    print(f"  Raw GLB size: {raw_size_mb:.2f} MB")
+
+    # Step 2: Optimize with gltf-transform
     glb_path = output_dir / "scene_web.glb"
-    success = export_optimized_glb(glb_path, use_draco=True)
+    print(f"  Optimizing with gltf-transform...")
+    stats = optimize_glb(
+        input_path=raw_glb_path,
+        output_path=glb_path,
+        max_texture_size=max_texture_size,
+        simplify_error=0.01,  # Aggressive: 1% max deviation
+        use_draco=True,
+        use_webp=True,
+        webp_quality=80,
+    )
 
-    if success:
-        size_mb = glb_path.stat().st_size / (1024 * 1024)
-        print(f"  Exported web GLB: {glb_path} ({size_mb:.2f} MB)")
+    if stats["success"]:
+        print(f"  Optimization complete:")
+        print(f"    Steps: {', '.join(stats['steps_completed'])}")
+        print(f"    Size: {stats['input_size_mb']:.2f} MB -> {stats['output_size_mb']:.2f} MB ({stats['reduction_percent']:.1f}% reduction)")
     else:
-        print(f"  Failed to export web GLB")
+        print(f"  Optimization failed: {stats['errors']}")
+        print(f"  Raw GLB available at: {raw_glb_path}")
 
 
 def _get_obj_matching(scene: Scene,
