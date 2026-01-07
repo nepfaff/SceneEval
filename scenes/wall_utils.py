@@ -276,7 +276,6 @@ def _create_one_sided_wall_material(
     # Configure material for one-sided transparency
     mat.use_backface_culling = True
     mat.blend_method = "CLIP"
-    mat.shadow_method = "CLIP"
     mat.alpha_threshold = 0.5
 
     # Set front face color
