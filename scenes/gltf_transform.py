@@ -52,8 +52,8 @@ def run_gltf_transform(args: list[str], timeout: int = 300) -> tuple[bool, str]:
 def optimize_glb(
     input_path: Path,
     output_path: Path,
-    max_texture_size: int = 512,
-    simplify_error: float = 0.01,
+    max_texture_size: int = 512,  # Unused - kept for API compatibility
+    simplify_error: float = 0.005,
     use_draco: bool = True,
     use_webp: bool = True,
     webp_quality: int = 80,
@@ -62,20 +62,26 @@ def optimize_glb(
 
     Pipeline:
     1. Weld vertices (merge duplicates)
-    2. Simplify meshes (error-based, adaptive)
+    2. Simplify meshes (error-based, 0.5% max deviation)
     3. Deduplicate meshes, materials, textures
     4. Flatten hierarchy
-    5. Resize textures
+    5. (Texture resize done in Blender with adaptive sizing)
     6. Compress textures (WebP)
-    7. Compress meshes (Draco)
-    8. Prune unused data
-    9. Center scene
+    7. Prune unused data
+    8. Center scene (for camera orbiting)
+    9. Draco compression (MUST be last - other steps decompress it)
+
+    Note: Texture resizing is now done adaptively in Blender before export,
+    based on object bounding box dimensions. See glb_optimization.resize_textures_adaptive.
+
+    Note: Vertex merging (to enable simplification for split-vertex meshes like
+    scene-agent) is done in Blender. See glb_optimization.merge_vertices_by_distance.
 
     Args:
         input_path: Input GLB file.
         output_path: Output GLB file.
-        max_texture_size: Maximum texture dimension.
-        simplify_error: Simplification error threshold (0.01 = 1% of bounds).
+        max_texture_size: Unused - texture sizing done in Blender.
+        simplify_error: Simplification error threshold (0.005 = 0.5% of bounds).
         use_draco: Apply Draco mesh compression.
         use_webp: Convert textures to WebP.
         webp_quality: WebP quality (1-100).
@@ -157,18 +163,9 @@ def optimize_glb(
         else:
             stats["errors"].append(f"flatten: {msg}")
 
-        # Step 5: Resize textures
-        next_file = next_temp()
-        success, msg = run_gltf_transform([
-            "resize", str(current), str(next_file),
-            "--width", str(max_texture_size),
-            "--height", str(max_texture_size),
-        ])
-        if success:
-            stats["steps_completed"].append("resize")
-            current = next_file
-        else:
-            stats["errors"].append(f"resize: {msg}")
+        # Step 5: Resize textures - SKIPPED (done adaptively in Blender)
+        # Adaptive texture sizing is now done in Blender before export based on
+        # object bounding box dimensions (see glb_optimization.resize_textures_adaptive)
 
         # Step 6: Convert to WebP
         if use_webp:
@@ -183,19 +180,7 @@ def optimize_glb(
             else:
                 stats["errors"].append(f"webp: {msg}")
 
-        # Step 7: Draco compression
-        if use_draco:
-            next_file = next_temp()
-            success, msg = run_gltf_transform([
-                "draco", str(current), str(next_file),
-            ])
-            if success:
-                stats["steps_completed"].append("draco")
-                current = next_file
-            else:
-                stats["errors"].append(f"draco: {msg}")
-
-        # Step 8: Prune unused data
+        # Step 7: Prune unused data (before Draco - prune decompresses Draco)
         next_file = next_temp()
         success, msg = run_gltf_transform([
             "prune", str(current), str(next_file)
@@ -206,7 +191,7 @@ def optimize_glb(
         else:
             stats["errors"].append(f"prune: {msg}")
 
-        # Step 9: Center scene
+        # Step 8: Center scene (before Draco - center decompresses Draco)
         next_file = next_temp()
         success, msg = run_gltf_transform([
             "center", str(current), str(next_file)
@@ -216,6 +201,18 @@ def optimize_glb(
             current = next_file
         else:
             stats["errors"].append(f"center: {msg}")
+
+        # Step 9: Draco compression (MUST be last - other steps decompress it)
+        if use_draco:
+            next_file = next_temp()
+            success, msg = run_gltf_transform([
+                "draco", str(current), str(next_file),
+            ])
+            if success:
+                stats["steps_completed"].append("draco")
+                current = next_file
+            else:
+                stats["errors"].append(f"draco: {msg}")
 
         # Copy final result to output
         try:

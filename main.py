@@ -594,23 +594,49 @@ def _setup_hdri_lighting(hdri_path: pathlib.Path, strength: float = 1.0, pack_im
     links.new(bg.outputs['Background'], output.inputs['Surface'])
 
 
-def _export_clean_glb(output_path: pathlib.Path) -> bool:
-    """Export a clean GLB from Blender without optimization.
+def _export_clean_glb(output_path: pathlib.Path, max_texture_size: int = 512) -> dict:
+    """Export a clean GLB from Blender with adaptive texture sizing.
 
-    Only hides placeholder objects, no mesh/texture processing.
-    Optimization is done by gltf-transform afterwards.
+    Applies:
+    - Hide placeholder objects
+    - Merge duplicate vertices (enables simplification for split-vertex meshes)
+    - Adaptive texture resizing based on object size
+
+    Mesh optimization is done by gltf-transform afterwards.
 
     Args:
         output_path: Output GLB file path.
+        max_texture_size: Maximum texture size (default 512).
 
     Returns:
-        True if export succeeded.
+        Dict with export stats, or empty dict if failed.
     """
     import bpy
-    from scenes.glb_optimization import hide_placeholder_objects
+    from scenes.glb_optimization import (
+        hide_placeholder_objects,
+        merge_vertices_by_distance,
+        resize_textures_adaptive,
+    )
+
+    stats = {}
 
     # Hide placeholder objects
-    hide_placeholder_objects()
+    hidden = hide_placeholder_objects()
+    stats["hidden_placeholders"] = len(hidden)
+
+    # Merge duplicate vertices (enables simplification for scene-agent etc.)
+    print("  Merging duplicate vertices...")
+    merge_stats = merge_vertices_by_distance()
+    stats["vertex_merge"] = merge_stats
+    if merge_stats["vertices_before"] > 0:
+        reduction = (1 - merge_stats["vertices_after"] / merge_stats["vertices_before"]) * 100
+        print(f"    {merge_stats['vertices_before']:,} -> {merge_stats['vertices_after']:,} verts ({reduction:.0f}% reduction)")
+
+    # Adaptive texture resizing based on object dimensions
+    print(f"  Resizing textures adaptively (max {max_texture_size}px)...")
+    texture_stats = resize_textures_adaptive(max_size=max_texture_size)
+    stats["texture_resize"] = texture_stats
+    print(f"    Resized {texture_stats['textures_resized']} textures")
 
     try:
         bpy.ops.export_scene.gltf(
@@ -626,10 +652,13 @@ def _export_clean_glb(output_path: pathlib.Path) -> bool:
             use_active_collection=False,
             use_active_scene=True,
         )
-        return True
+        stats["export_success"] = True
+        return stats
     except Exception as e:
         print(f"  Failed to export clean GLB: {e}")
-        return False
+        stats["export_success"] = False
+        stats["error"] = str(e)
+        return stats
 
 
 def _export_web_glb_from_blend(
@@ -663,10 +692,11 @@ def _export_web_glb_from_blend(
     # Hide SceneWeaver placeholder objects (if any)
     _hide_sceneweaver_placeholders()
 
-    # Step 1: Export clean GLB from Blender
+    # Step 1: Export clean GLB from Blender (with adaptive texture sizing)
     raw_glb_path = output_dir / "scene_web_raw.glb"
     print(f"  Exporting clean GLB from Blender...")
-    if not _export_clean_glb(raw_glb_path):
+    export_stats = _export_clean_glb(raw_glb_path, max_texture_size=max_texture_size)
+    if not export_stats.get("export_success"):
         print(f"  Failed to export clean GLB")
         # Reload previous blend file
         if current_blend:
@@ -678,14 +708,14 @@ def _export_web_glb_from_blend(
     raw_size_mb = raw_glb_path.stat().st_size / (1024 * 1024)
     print(f"  Raw GLB size: {raw_size_mb:.2f} MB")
 
-    # Step 2: Optimize with gltf-transform
+    # Step 2: Optimize with gltf-transform (texture resize already done in Blender)
     glb_path = output_dir / "scene_web.glb"
     print(f"  Optimizing with gltf-transform...")
     stats = optimize_glb(
         input_path=raw_glb_path,
         output_path=glb_path,
-        max_texture_size=max_texture_size,
-        simplify_error=0.01,  # Aggressive: 1% max deviation
+        max_texture_size=max_texture_size,  # Skipped since already resized
+        simplify_error=0,  # 0% = no simplification for testing
         use_draco=True,
         use_webp=True,
         webp_quality=80,
@@ -875,7 +905,7 @@ def _export_web_glb_from_current_scene(
     Export web-optimized GLB from the current Blender scene using gltf-transform.
 
     Pipeline:
-    1. Export clean GLB from Blender (no optimization)
+    1. Export clean GLB from Blender (with adaptive texture sizing)
     2. Run gltf-transform optimization (simplify, webp, draco)
 
     Args:
@@ -884,24 +914,25 @@ def _export_web_glb_from_current_scene(
     """
     from scenes.gltf_transform import optimize_glb
 
-    # Step 1: Export clean GLB from Blender
+    # Step 1: Export clean GLB from Blender (with adaptive texture sizing)
     raw_glb_path = output_dir / "scene_web_raw.glb"
     print(f"  Exporting clean GLB from Blender...")
-    if not _export_clean_glb(raw_glb_path):
+    export_stats = _export_clean_glb(raw_glb_path, max_texture_size=max_texture_size)
+    if not export_stats.get("export_success"):
         print(f"  Failed to export clean GLB")
         return
 
     raw_size_mb = raw_glb_path.stat().st_size / (1024 * 1024)
     print(f"  Raw GLB size: {raw_size_mb:.2f} MB")
 
-    # Step 2: Optimize with gltf-transform
+    # Step 2: Optimize with gltf-transform (texture resize already done in Blender)
     glb_path = output_dir / "scene_web.glb"
     print(f"  Optimizing with gltf-transform...")
     stats = optimize_glb(
         input_path=raw_glb_path,
         output_path=glb_path,
-        max_texture_size=max_texture_size,
-        simplify_error=0.01,  # Aggressive: 1% max deviation
+        max_texture_size=max_texture_size,  # Skipped since already resized
+        simplify_error=0,  # 0% = no simplification for testing
         use_draco=True,
         use_webp=True,
         webp_quality=80,
