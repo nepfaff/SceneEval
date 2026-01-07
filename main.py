@@ -394,6 +394,7 @@ def _render_room_views_from_blend(
         hide_walls_for_view,
         restore_all_walls,
         add_transparent_walls,
+        mark_outer_walls_from_json,
     )
 
     if not blend_path.exists():
@@ -407,6 +408,11 @@ def _render_room_views_from_blend(
     # Save current state and open blend file
     current_blend = bpy.data.filepath
     bpy.ops.wm.open_mainfile(filepath=str(blend_path))
+
+    # Try to mark outer walls from house_layout.json (SceneAgent format)
+    # This allows only outer walls to be hidden during dollhouse rendering
+    scene_dir = blend_path.parent.parent  # Go up from assets/ to scene directory
+    mark_outer_walls_from_json(scene_dir)
 
     # Hide SceneWeaver placeholder objects (if any)
     _hide_sceneweaver_placeholders()

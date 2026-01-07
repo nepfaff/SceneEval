@@ -4,7 +4,9 @@ Used for dollhouse-style room renders where walls between camera and scene
 center are hidden to reveal interior.
 """
 
+import json
 import logging
+import pathlib
 import bpy
 import numpy as np
 from mathutils import Vector
@@ -118,43 +120,6 @@ def compute_wall_normal(obj: bpy.types.Object, scene_centroid: Vector) -> Vector
     return candidate_normal.normalized()
 
 
-def should_hide_wall(
-    obj: bpy.types.Object,
-    camera_direction: Vector,
-    is_top_view: bool,
-    scene_centroid: Vector,
-) -> bool:
-    """Determine if wall should be hidden based on camera viewpoint.
-
-    Walls between camera and room center should be hidden for dollhouse effect.
-
-    Args:
-        obj: Wall object to check.
-        camera_direction: Direction camera is pointing (normalized, in XY plane).
-        is_top_view: True if this is a top-down view.
-        scene_centroid: Center point of the scene.
-
-    Returns:
-        True if wall should be hidden.
-    """
-    # Top view: show all walls (don't hide any)
-    if is_top_view:
-        return False
-
-    # Side view: hide walls that block camera view into room
-    wall_normal = compute_wall_normal(obj, scene_centroid)
-
-    # Wall normal points from wall toward room center (inward)
-    # Camera direction points from camera toward scene center
-    # If they point in SAME direction (positive dot): wall is BETWEEN camera and room
-    # If they point in OPPOSITE directions (negative dot): wall is on FAR side
-    camera_dir_xy = Vector((camera_direction.x, camera_direction.y, 0.0)).normalized()
-    dot_product = camera_dir_xy.dot(wall_normal)
-
-    # Hide if wall is between camera and room (same direction, positive dot)
-    return dot_product > 0.1
-
-
 def get_all_walls() -> list[bpy.types.Object]:
     """Get all wall objects in the current scene.
 
@@ -191,30 +156,85 @@ def hide_walls_for_view(
     scene_centroid: Vector,
     is_top_view: bool = False,
 ) -> list[bpy.types.Object]:
-    """Hide walls that block the camera view.
+    """Hide walls blocking camera view using 360° raycasting at multiple heights.
+
+    Shoots rays from camera XY position at 3 different heights (low, mid, high)
+    to handle windows and other openings. Any wall hit by these rays is blocking
+    the view and gets hidden.
 
     Args:
         camera_position: Camera position in world coordinates.
-        scene_centroid: Center of the scene.
+        scene_centroid: Center of the scene (unused, kept for API compat).
         is_top_view: True if rendering top-down view.
 
     Returns:
         List of wall objects that were hidden (for later restoration).
     """
-    # Camera direction: from camera toward scene center
-    camera_direction = (scene_centroid - camera_position).normalized()
+    import math
 
+    # Top view: show all walls
+    if is_top_view:
+        return []
+
+    # Determine wall heights from actual walls in scene
     walls = get_all_walls()
-    hidden_walls = []
+    if walls:
+        wall_heights = []
+        for wall in walls:
+            try:
+                bbox = np.array([wall.matrix_world @ Vector(c) for c in wall.bound_box])
+                height = bbox[:, 2].max() - bbox[:, 2].min()
+                wall_heights.append(height)
+            except Exception:
+                pass
+        if wall_heights:
+            max_wall_height = max(wall_heights)
+        else:
+            max_wall_height = 2.8  # Default
+    else:
+        max_wall_height = 2.8  # Default
 
-    for wall in walls:
-        if should_hide_wall(wall, camera_direction, is_top_view, scene_centroid):
-            wall.hide_render = True
-            wall.hide_viewport = True
-            hidden_walls.append(wall)
+    # Cast rays at 3 heights: 10%, 50%, 90% of wall height (handles windows)
+    RAY_HEIGHTS = [
+        max_wall_height * 0.1,  # Low (below windows)
+        max_wall_height * 0.5,  # Mid
+        max_wall_height * 0.9,  # High (above windows)
+    ]
+
+    # Shoot rays in 360 degrees at 1° resolution per height
+    # Offset angles at each height for better coverage (effectively 0.33° resolution)
+    NUM_RAYS = 360
+    walls_to_hide = set()
+
+    depsgraph = bpy.context.evaluated_depsgraph_get()
+
+    for height_idx, height in enumerate(RAY_HEIGHTS):
+        ray_origin = Vector((camera_position.x, camera_position.y, height))
+        # Offset angle by 1/3 degree for each height level
+        angle_offset = height_idx / len(RAY_HEIGHTS)
+
+        for i in range(NUM_RAYS):
+            angle = math.radians(i + angle_offset)
+            direction = Vector((math.cos(angle), math.sin(angle), 0))
+
+            # Cast ray
+            result, location, normal, index, obj, matrix = bpy.context.scene.ray_cast(
+                depsgraph, ray_origin, direction
+            )
+
+            if result and obj is not None and looks_like_wall(obj):
+                walls_to_hide.add(obj.name)
+
+    # Hide the walls
+    hidden_walls = []
+    for obj in bpy.data.objects:
+        if obj.name in walls_to_hide:
+            obj.hide_render = True
+            obj.hide_viewport = True
+            hidden_walls.append(obj)
 
     bpy.context.view_layer.update()
-    logger.debug(f"Hidden {len(hidden_walls)} walls for camera view")
+    logger.debug(f"Hidden {len(hidden_walls)} walls for camera view (360° raycast x3 heights)")
     return hidden_walls
 
 
@@ -288,13 +308,32 @@ def _create_one_sided_wall_material(
 def get_floor_bounds() -> tuple[Vector, Vector] | None:
     """Get the combined bounding box of all floor objects.
 
+    Detects floors by:
+    1. Objects with "floor" in the name
+    2. Flat horizontal objects (large X/Y extent, minimal Z extent)
+
     Returns:
         Tuple of (min_coords, max_coords) as Vectors, or None if no floors found.
     """
-    floor_objects = [
-        obj for obj in bpy.data.objects
-        if obj.type == "MESH" and ("floor" in obj.name.lower() or "Floor" in obj.name)
-    ]
+    floor_objects = []
+
+    for obj in bpy.data.objects:
+        if obj.type != "MESH":
+            continue
+
+        # Check by name
+        if "floor" in obj.name.lower():
+            floor_objects.append(obj)
+            continue
+
+        # Check by geometry: flat horizontal objects (floors have minimal Z height)
+        try:
+            dims = obj.dimensions
+            # Floor criteria: Z dimension < 0.1m AND horizontal extent > 1m
+            if dims.z < 0.1 and dims.x > 1.0 and dims.y > 1.0:
+                floor_objects.append(obj)
+        except Exception:
+            pass
 
     if not floor_objects:
         return None
@@ -310,6 +349,227 @@ def get_floor_bounds() -> tuple[Vector, Vector] | None:
     max_coords = all_corners.max(axis=0)
 
     return Vector(min_coords), Vector(max_coords)
+
+
+def _detect_outer_wall_geometric(obj: bpy.types.Object) -> bool:
+    """Detect if wall is on house perimeter using geometry and raycasting.
+
+    A wall is considered outer if casting a ray in its outward direction
+    (away from scene center) does not hit any floor within the building.
+    This handles L-shaped buildings where outer walls aren't on bbox edges.
+
+    Args:
+        obj: Wall object to check.
+
+    Returns:
+        True if wall appears to be on the house perimeter.
+    """
+    floor_bounds = get_floor_bounds()
+    if floor_bounds is None:
+        return True  # Conservative fallback
+
+    min_coords, max_coords = floor_bounds
+
+    # Get wall center
+    try:
+        bbox_world = np.array([obj.matrix_world @ Vector(corner) for corner in obj.bound_box])
+        wall_center = Vector((bbox_world.min(axis=0) + bbox_world.max(axis=0)) / 2)
+    except Exception:
+        return True
+
+    # First check: is wall on the bounding box edge?
+    TOLERANCE = 0.3
+    on_min_x = abs(wall_center[0] - min_coords.x) < TOLERANCE
+    on_max_x = abs(wall_center[0] - max_coords.x) < TOLERANCE
+    on_min_y = abs(wall_center[1] - min_coords.y) < TOLERANCE
+    on_max_y = abs(wall_center[1] - max_coords.y) < TOLERANCE
+
+    if on_min_x or on_max_x or on_min_y or on_max_y:
+        return True
+
+    # Second check: raycast to detect L-corner outer walls
+    # Cast ray from wall center outward (away from scene center)
+    # If no floor is hit within building bounds, it's an outer wall
+    scene_centroid = compute_scene_centroid()
+    inward_normal = compute_wall_normal(obj, scene_centroid)
+    outward_normal = -inward_normal
+
+    # Cast ray from just outside the wall in the outward direction
+    ray_origin = Vector((
+        wall_center.x + outward_normal.x * 0.3,
+        wall_center.y + outward_normal.y * 0.3,
+        0.1  # Near floor level
+    ))
+
+    # Max distance to check (building diagonal)
+    max_dist = ((max_coords.x - min_coords.x)**2 + (max_coords.y - min_coords.y)**2)**0.5
+
+    depsgraph = bpy.context.evaluated_depsgraph_get()
+    result, location, normal, index, hit_obj, matrix = bpy.context.scene.ray_cast(
+        depsgraph, ray_origin, Vector((outward_normal.x, outward_normal.y, 0)), distance=max_dist
+    )
+
+    # If ray doesn't hit anything, or hits something far away, this is outer wall
+    if not result:
+        return True
+
+    # If it hits a floor nearby, it's interior; if it hits far away floor, it's outer
+    hit_dist = (location - ray_origin).length
+    if hit_dist > 1.0:  # More than 1m means it went outside the room
+        return True
+
+    return False
+
+
+def is_outer_wall(obj: bpy.types.Object) -> bool:
+    """Check if a wall is an outer (perimeter) wall.
+
+    Uses custom property if set during scene loading, otherwise falls back
+    to geometric detection based on floor bounding box.
+
+    Args:
+        obj: Wall object to check.
+
+    Returns:
+        True if wall is on the house perimeter, False if interior partition.
+    """
+    # Check explicit marking first (set during scene load)
+    if "is_outer_wall" in obj:
+        return obj["is_outer_wall"]
+
+    # Fallback: geometric detection
+    return _detect_outer_wall_geometric(obj)
+
+
+def mark_outer_walls_from_json(scene_dir: pathlib.Path) -> int:
+    """Mark walls as outer/inner based on house_layout.json (SceneAgent format).
+
+    Reads the house_layout.json file and marks Blender wall objects based on
+    whether they are on a room boundary that faces the exterior (no adjacent room).
+
+    For L-shaped houses, this correctly identifies outer walls that are not on
+    the overall house bounding box but still face outside.
+
+    Args:
+        scene_dir: Path to scene directory containing house_layout.json.
+
+    Returns:
+        Number of walls marked, or 0 if JSON not found.
+    """
+    # Try to find house_layout.json
+    json_path = scene_dir / "house_layout.json"
+    if not json_path.exists():
+        # Try in parent directory (for assets subdirectory structure)
+        json_path = scene_dir.parent / "house_layout.json"
+        if not json_path.exists():
+            logger.debug(f"house_layout.json not found in {scene_dir}")
+            return 0
+
+    try:
+        with open(json_path, "r") as f:
+            layout_data = json.load(f)
+    except (json.JSONDecodeError, IOError) as e:
+        logger.warning(f"Failed to load house_layout.json: {e}")
+        return 0
+
+    # Build list of all exterior edges from room boundaries
+    # An edge is exterior if no other room shares that boundary
+    placed_rooms = layout_data.get("placed_rooms", [])
+    if not placed_rooms:
+        return 0
+
+    # Collect all room boundaries as (edge_type, coord, range_min, range_max)
+    # edge_type: 'x' for vertical walls (constant x), 'y' for horizontal walls (constant y)
+    room_edges = []
+    for room in placed_rooms:
+        pos = room.get("position", [0, 0])
+        width = room.get("width", 0)
+        depth = room.get("depth", 0)
+
+        room_min_x, room_min_y = pos[0], pos[1]
+        room_max_x, room_max_y = pos[0] + width, pos[1] + depth
+
+        # Four edges of this room
+        room_edges.append(('x', room_min_x, room_min_y, room_max_y, room.get("room_id")))  # west
+        room_edges.append(('x', room_max_x, room_min_y, room_max_y, room.get("room_id")))  # east
+        room_edges.append(('y', room_min_y, room_min_x, room_max_x, room.get("room_id")))  # south
+        room_edges.append(('y', room_max_y, room_min_x, room_max_x, room.get("room_id")))  # north
+
+    # Find exterior edges (edges not shared with another room)
+    EDGE_TOLERANCE = 0.2
+    exterior_edges = []
+    for edge in room_edges:
+        edge_type, coord, range_min, range_max, room_id = edge
+        is_shared = False
+
+        # Check if another room shares this edge
+        for other_edge in room_edges:
+            if other_edge[4] == room_id:  # Same room
+                continue
+            other_type, other_coord, other_min, other_max, _ = other_edge
+            if edge_type != other_type:
+                continue
+            # Check if coordinates match and ranges overlap
+            if abs(coord - other_coord) < EDGE_TOLERANCE:
+                # Check for range overlap
+                overlap = min(range_max, other_max) - max(range_min, other_min)
+                if overlap > EDGE_TOLERANCE:
+                    is_shared = True
+                    break
+
+        if not is_shared:
+            exterior_edges.append((edge_type, coord, range_min, range_max))
+
+    logger.debug(f"Found {len(exterior_edges)} exterior edges from {len(placed_rooms)} rooms")
+
+    # Mark Blender wall objects based on position relative to exterior edges
+    marked_count = 0
+    walls = get_all_walls()
+    TOLERANCE = 0.2  # 20cm tolerance for wall-to-edge matching
+
+    for wall_obj in walls:
+        # Get wall bounding box in world space
+        try:
+            bbox_local = np.array(wall_obj.bound_box)
+            bbox_world = np.array([wall_obj.matrix_world @ Vector(corner) for corner in bbox_local])
+            wall_min = bbox_world.min(axis=0)
+            wall_max = bbox_world.max(axis=0)
+            wall_center = (wall_min + wall_max) / 2
+
+            # Determine wall orientation (thin dimension)
+            dims = wall_max - wall_min
+            is_x_wall = dims[0] < dims[1]  # Thin in X = wall runs along Y
+        except Exception:
+            wall_obj["is_outer_wall"] = True
+            marked_count += 1
+            continue
+
+        # Check if wall matches any exterior edge
+        is_outer = False
+        for edge_type, coord, range_min, range_max in exterior_edges:
+            if edge_type == 'x' and is_x_wall:
+                # Vertical wall (constant x) - check if x matches and y range overlaps
+                if abs(wall_center[0] - coord) < TOLERANCE:
+                    wall_y_min, wall_y_max = wall_min[1], wall_max[1]
+                    overlap = min(wall_y_max, range_max) - max(wall_y_min, range_min)
+                    if overlap > -TOLERANCE:
+                        is_outer = True
+                        break
+            elif edge_type == 'y' and not is_x_wall:
+                # Horizontal wall (constant y) - check if y matches and x range overlaps
+                if abs(wall_center[1] - coord) < TOLERANCE:
+                    wall_x_min, wall_x_max = wall_min[0], wall_max[0]
+                    overlap = min(wall_x_max, range_max) - max(wall_x_min, range_min)
+                    if overlap > -TOLERANCE:
+                        is_outer = True
+                        break
+
+        wall_obj["is_outer_wall"] = is_outer
+        marked_count += 1
+        logger.debug(f"Marked wall '{wall_obj.name}' at ({float(wall_center[0]):.2f}, {float(wall_center[1]):.2f}) as outer={is_outer}")
+
+    logger.info(f"Marked {marked_count} walls using exterior edges from house_layout.json")
+    return marked_count
 
 
 def add_transparent_walls(
