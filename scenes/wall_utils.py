@@ -151,6 +151,55 @@ def compute_scene_centroid() -> Vector:
     return Vector(centroid)
 
 
+def _create_wall_boxes(wall_info: dict) -> dict[str, bpy.types.Object]:
+    """Create temporary box meshes from wall bounding boxes for raycasting.
+
+    This creates solid boxes that fill any openings (doors, windows) so rays
+    can't pass through them.
+
+    Args:
+        wall_info: Dict mapping wall_name -> (center, thin_axis, thin_pos, min_c, max_c)
+
+    Returns:
+        Dict mapping wall_name -> temp_box_object
+    """
+    import bmesh
+
+    temp_boxes = {}
+    for wall_name, (center, thin_axis, thin_pos, min_c, max_c) in wall_info.items():
+        # Create box mesh
+        bm = bmesh.new()
+        bmesh.ops.create_cube(bm, size=1.0)
+
+        # Scale and position to match wall bounding box
+        dims = max_c - min_c
+        for v in bm.verts:
+            v.co.x = v.co.x * dims[0] + center[0]
+            v.co.y = v.co.y * dims[1] + center[1]
+            v.co.z = v.co.z * dims[2] + center[2]
+
+        # Create Blender object
+        mesh = bpy.data.meshes.new(f"_temp_wall_box_{wall_name}")
+        bm.to_mesh(mesh)
+        bm.free()
+
+        obj = bpy.data.objects.new(f"_temp_wall_box_{wall_name}", mesh)
+        obj["_original_wall"] = wall_name  # Store reference to original wall
+        bpy.context.scene.collection.objects.link(obj)
+        temp_boxes[wall_name] = obj
+
+    bpy.context.view_layer.update()
+    return temp_boxes
+
+
+def _remove_wall_boxes(temp_boxes: dict[str, bpy.types.Object]) -> None:
+    """Remove temporary box meshes created for raycasting."""
+    for obj in temp_boxes.values():
+        mesh = obj.data
+        bpy.data.objects.remove(obj)
+        bpy.data.meshes.remove(mesh)
+
+
 def hide_walls_for_view(
     camera_position: Vector,
     scene_centroid: Vector,
@@ -201,6 +250,32 @@ def hide_walls_for_view(
         max_wall_height * 0.9,  # High (above windows)
     ]
 
+    # Build wall info first (needed for flat-face detection and adjacency)
+    all_walls = get_all_walls()
+    wall_info = {}  # name -> (center, thin_axis, thin_pos, min_c, max_c)
+    for wall in all_walls:
+        try:
+            bbox = np.array([wall.matrix_world @ Vector(c) for c in wall.bound_box])
+            min_c = bbox.min(axis=0)
+            max_c = bbox.max(axis=0)
+            dims = max_c - min_c
+            center = (min_c + max_c) / 2
+
+            # Find thin axis (0=X, 1=Y)
+            if dims[0] < dims[1]:
+                thin_axis = 0
+                thin_pos = center[0]
+            else:
+                thin_axis = 1
+                thin_pos = center[1]
+
+            wall_info[wall.name] = (center, thin_axis, thin_pos, min_c, max_c)
+        except Exception:
+            pass
+
+    # Create temporary box meshes for raycasting (blocks doors/windows)
+    temp_boxes = _create_wall_boxes(wall_info)
+
     # Shoot rays in 360 degrees at 1° resolution per height
     # Offset angles at each height for better coverage (effectively 0.33° resolution)
     NUM_RAYS = 360
@@ -217,24 +292,82 @@ def hide_walls_for_view(
             angle = math.radians(i + angle_offset)
             direction = Vector((math.cos(angle), math.sin(angle), 0))
 
-            # Cast ray
+            # Cast ray against temp boxes (solid, no door/window openings)
             result, location, normal, index, obj, matrix = bpy.context.scene.ray_cast(
                 depsgraph, ray_origin, direction
             )
 
-            if result and obj is not None and looks_like_wall(obj):
-                walls_to_hide.add(obj.name)
+            # Check if we hit a temp wall box OR an original wall
+            # (Original walls still exist, so rays may hit them instead of temp boxes)
+            if result and obj is not None:
+                # Determine which wall was hit
+                if obj.name.startswith("_temp_wall_box_"):
+                    wall_name = obj.get("_original_wall")
+                elif obj.name in wall_info:
+                    wall_name = obj.name
+                else:
+                    wall_name = None
+
+                if wall_name and wall_name in wall_info:
+                    _, thin_axis, _, min_c, max_c = wall_info[wall_name]
+                    hit_pos = np.array(location)
+
+                    # Check if hit is on flat face (hide) or thin edge (don't hide)
+                    # For wall thin in X: flat faces at x_min/x_max, thin edges at y_min/y_max
+                    # For wall thin in Y: flat faces at y_min/y_max, thin edges at x_min/x_max
+                    FACE_TOLERANCE = 0.15
+
+                    hit_thin_edge = False
+                    if thin_axis == 0:  # Wall thin in X, thin edges are at Y ends
+                        if abs(hit_pos[1] - min_c[1]) < FACE_TOLERANCE or abs(hit_pos[1] - max_c[1]) < FACE_TOLERANCE:
+                            hit_thin_edge = True
+                    else:  # Wall thin in Y, thin edges are at X ends
+                        if abs(hit_pos[0] - min_c[0]) < FACE_TOLERANCE or abs(hit_pos[0] - max_c[0]) < FACE_TOLERANCE:
+                            hit_thin_edge = True
+
+                    if not hit_thin_edge:
+                        walls_to_hide.add(wall_name)
+
+    # Clean up temporary boxes
+    _remove_wall_boxes(temp_boxes)
+
+    # Also hide adjacent parallel walls (for double-wall geometry like SceneAgent)
+    # When outer wall is hit, also hide inner wall that's within 0.2m
+    ADJACENT_WALL_TOLERANCE = 0.2
+
+    # For each hit wall, find adjacent parallel walls
+    expanded_walls_to_hide = set(walls_to_hide)
+    for hit_wall_name in walls_to_hide:
+        if hit_wall_name not in wall_info:
+            continue
+        hit_center, hit_thin_axis, hit_thin_pos, hit_min, hit_max = wall_info[hit_wall_name]
+
+        for other_name, (other_center, other_thin_axis, other_thin_pos, other_min, other_max) in wall_info.items():
+            if other_name == hit_wall_name:
+                continue
+            # Must have same thin axis (parallel walls)
+            if other_thin_axis != hit_thin_axis:
+                continue
+            # Must be close in the thin dimension
+            if abs(other_thin_pos - hit_thin_pos) > ADJACENT_WALL_TOLERANCE:
+                continue
+            # Must overlap in the long dimension (not just parallel but offset)
+            long_axis = 1 - hit_thin_axis
+            overlap_min = max(hit_min[long_axis], other_min[long_axis])
+            overlap_max = min(hit_max[long_axis], other_max[long_axis])
+            if overlap_max > overlap_min:  # They overlap
+                expanded_walls_to_hide.add(other_name)
 
     # Hide the walls
     hidden_walls = []
     for obj in bpy.data.objects:
-        if obj.name in walls_to_hide:
+        if obj.name in expanded_walls_to_hide:
             obj.hide_render = True
             obj.hide_viewport = True
             hidden_walls.append(obj)
 
     bpy.context.view_layer.update()
-    logger.debug(f"Hidden {len(hidden_walls)} walls for camera view (360° raycast x3 heights)")
+    logger.debug(f"Hidden {len(hidden_walls)} walls for camera view (360° raycast, {len(walls_to_hide)} hit + {len(expanded_walls_to_hide) - len(walls_to_hide)} adjacent)")
     return hidden_walls
 
 
