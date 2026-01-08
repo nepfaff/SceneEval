@@ -120,6 +120,45 @@ def is_articulated_sdf(sdf_dir: Path) -> bool:
     return len(link_meshes) > 1
 
 
+def get_sdf_scale_factor(sdf_dir: Path) -> float:
+    """Extract the uniform scale factor from an SDF file.
+
+    Articulated objects from PartNet-Mobility often have scale elements in
+    their SDF mesh definitions. This reads the first scale element found.
+
+    Args:
+        sdf_dir: Directory containing the SDF file
+
+    Returns:
+        Uniform scale factor (1.0 if no scale found or non-uniform)
+    """
+    import xml.etree.ElementTree as ET
+
+    # Find SDF file in directory
+    sdf_files = list(sdf_dir.glob("*.sdf"))
+    if not sdf_files:
+        return 1.0
+
+    try:
+        tree = ET.parse(sdf_files[0])
+        root = tree.getroot()
+
+        # Find first scale element
+        for scale_elem in root.iter("scale"):
+            if scale_elem.text:
+                values = [float(v) for v in scale_elem.text.strip().split()]
+                if len(values) >= 3:
+                    # Check if uniform scale
+                    if values[0] == values[1] == values[2]:
+                        return values[0]
+                    else:
+                        # Non-uniform scale - use average (shouldn't happen often)
+                        return sum(values[:3]) / 3
+        return 1.0
+    except Exception:
+        return 1.0
+
+
 def merge_articulated_meshes(sdf_dir: Path) -> Path | None:
     """
     Merge combined_scene.gltf into a single mesh file for articulated objects.
@@ -127,6 +166,10 @@ def merge_articulated_meshes(sdf_dir: Path) -> Path | None:
     Articulated objects from scene-agent have separate meshes for each link
     (doors, drawers, body). This merges them into a single mesh that Blender
     can import correctly as one object.
+
+    Also applies the scale factor from the SDF file, as articulated objects
+    from PartNet-Mobility often have scale factors baked into the SDF but not
+    the GLTF meshes.
 
     Args:
         sdf_dir: Directory containing combined_scene.gltf
@@ -142,6 +185,9 @@ def merge_articulated_meshes(sdf_dir: Path) -> Path | None:
         return merged_output_path
 
     try:
+        # Get scale factor from SDF
+        scale_factor = get_sdf_scale_factor(sdf_dir)
+
         # Load the GLTF scene
         scene = trimesh.load(str(combined_scene_path))
 
@@ -163,11 +209,18 @@ def merge_articulated_meshes(sdf_dir: Path) -> Path | None:
 
             # Concatenate all meshes into one
             merged = trimesh.util.concatenate(meshes)
+
+            # Apply SDF scale factor if not 1.0
+            if scale_factor != 1.0:
+                merged.apply_scale(scale_factor)
+
             merged.export(str(merged_output_path))
             return merged_output_path
 
         elif isinstance(scene, trimesh.Trimesh):
             # Already a single mesh
+            if scale_factor != 1.0:
+                scene.apply_scale(scale_factor)
             scene.export(str(merged_output_path))
             return merged_output_path
 

@@ -39,12 +39,57 @@ def is_articulated_sdf(sdf_dir: Path) -> bool:
     return len(link_meshes) > 1
 
 
-def merge_combined_scene(sdf_dir: Path) -> Path | None:
+def get_sdf_scale_factor(sdf_dir: Path) -> float:
+    """
+    Extract the uniform scale factor from an SDF file.
+
+    Articulated objects from PartNet-Mobility often have scale elements in
+    their SDF mesh definitions.
+
+    Args:
+        sdf_dir: Directory containing the SDF file
+
+    Returns:
+        Uniform scale factor (1.0 if no scale found)
+    """
+    import xml.etree.ElementTree as ET
+
+    # Find SDF file in directory
+    sdf_files = list(sdf_dir.glob("*.sdf"))
+    if not sdf_files:
+        return 1.0
+
+    try:
+        tree = ET.parse(sdf_files[0])
+        root = tree.getroot()
+
+        # Find first scale element
+        for scale_elem in root.iter("scale"):
+            if scale_elem.text:
+                values = [float(v) for v in scale_elem.text.strip().split()]
+                if len(values) >= 3:
+                    # Check if uniform scale
+                    if values[0] == values[1] == values[2]:
+                        return values[0]
+                    else:
+                        # Non-uniform scale - use average
+                        return sum(values[:3]) / 3
+        return 1.0
+    except Exception:
+        return 1.0
+
+
+def merge_combined_scene(sdf_dir: Path, force: bool = False) -> Path | None:
     """
     Merge combined_scene.gltf into a single mesh file.
 
+    Also applies the scale factor from the SDF file, as articulated objects
+    from PartNet-Mobility often have scale factors baked into the SDF but not
+    the GLTF meshes.
+
     Args:
         sdf_dir: Directory containing combined_scene.gltf
+        force: If True, regenerate even if merged file exists
 
     Returns:
         Path to merged file, or None if merging failed
@@ -52,11 +97,18 @@ def merge_combined_scene(sdf_dir: Path) -> Path | None:
     combined_scene_path = sdf_dir / "combined_scene.gltf"
     merged_output_path = sdf_dir / "combined_merged.glb"
 
-    # Skip if already merged
-    if merged_output_path.exists():
+    # Skip if already merged (unless force)
+    if merged_output_path.exists() and not force:
         return merged_output_path
 
+    # Delete existing merged file if force
+    if merged_output_path.exists() and force:
+        merged_output_path.unlink()
+
     try:
+        # Get scale factor from SDF
+        scale_factor = get_sdf_scale_factor(sdf_dir)
+
         # Load the GLTF scene
         scene = trimesh.load(str(combined_scene_path))
 
@@ -80,6 +132,11 @@ def merge_combined_scene(sdf_dir: Path) -> Path | None:
             # Concatenate all meshes into one
             merged = trimesh.util.concatenate(meshes)
 
+            # Apply SDF scale factor if not 1.0
+            if scale_factor != 1.0:
+                merged.apply_scale(scale_factor)
+                print(f"    Applied scale factor: {scale_factor}")
+
             # Export as GLB (binary format preserves more data)
             merged.export(str(merged_output_path))
 
@@ -87,7 +144,10 @@ def merge_combined_scene(sdf_dir: Path) -> Path | None:
             return merged_output_path
 
         elif isinstance(scene, trimesh.Trimesh):
-            # Already a single mesh, just copy it
+            # Already a single mesh
+            if scale_factor != 1.0:
+                scene.apply_scale(scale_factor)
+                print(f"    Applied scale factor: {scale_factor}")
             scene.export(str(merged_output_path))
             print(f"    Single mesh copied -> {merged_output_path.name}")
             return merged_output_path
@@ -101,12 +161,13 @@ def merge_combined_scene(sdf_dir: Path) -> Path | None:
         return None
 
 
-def fix_scene_articulated_meshes(scene_dir: Path) -> int:
+def fix_scene_articulated_meshes(scene_dir: Path, force: bool = False) -> int:
     """
     Fix all articulated meshes in a scene directory.
 
     Args:
         scene_dir: Path to scene directory (e.g., input/SceneAgent/scene_0)
+        force: If True, regenerate even if merged file exists
 
     Returns:
         Number of meshes fixed
@@ -128,7 +189,7 @@ def fix_scene_articulated_meshes(scene_dir: Path) -> int:
                 continue
 
             if is_articulated_sdf(sdf_dir):
-                result = merge_combined_scene(sdf_dir)
+                result = merge_combined_scene(sdf_dir, force=force)
                 if result:
                     fixed_count += 1
 
@@ -150,7 +211,16 @@ def main():
         default=None,
         help="Fix only a specific scene (e.g., scene_0)",
     )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Regenerate merged files even if they already exist (use if scale was wrong)",
+    )
     args = parser.parse_args()
+
+    # If force flag is set, delete existing merged files first
+    if args.force:
+        print("Force mode: will regenerate existing merged files")
 
     input_dir = Path(args.input_dir).expanduser().resolve()
 
@@ -168,7 +238,7 @@ def main():
             return 1
 
         print(f"Fixing articulated meshes in {args.scene}...")
-        fixed = fix_scene_articulated_meshes(scene_dir)
+        fixed = fix_scene_articulated_meshes(scene_dir, force=args.force)
         total_fixed += fixed
         print(f"  Fixed {fixed} articulated objects")
     else:
@@ -189,7 +259,7 @@ def main():
 
         for scene_dir in scene_dirs:
             print(f"\nProcessing {scene_dir.name}...")
-            fixed = fix_scene_articulated_meshes(scene_dir)
+            fixed = fix_scene_articulated_meshes(scene_dir, force=args.force)
             total_fixed += fixed
             if fixed > 0:
                 print(f"  Fixed {fixed} articulated objects")

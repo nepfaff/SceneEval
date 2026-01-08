@@ -907,8 +907,9 @@ class BlenderScene:
             
         else:
             
-            # Store floor polygon here for later checking wall facing direction
+            # Store floor polygon and center for wall positioning
             floor_polygon = None
+            floor_center = None
 
             # Track OBJ-loaded holes across all wall elements (to avoid duplicates)
             obj_loaded_hole_names = set()  # For visibility/material tracking
@@ -922,9 +923,10 @@ class BlenderScene:
                     case "Floor":
                         # Skip if floor already loaded from GLB
                         if converted_floor_loaded:
-                            # Still need to compute floor polygon for wall facing direction
+                            # Still need to compute floor polygon and center for wall positioning
                             floor_points = np.asarray(element.points)
                             floor_polygon = shapely.geometry.Polygon(floor_points[..., :2])
+                            floor_center = np.mean(floor_points[..., :2], axis=0)
                             continue
 
                         floor_name = f"floor_{element.roomId.replace(' ', '_')}"
@@ -962,8 +964,9 @@ class BlenderScene:
 
                         self.b_architecture[floor_name] = floor
 
-                        # Extra, store the 2D floor polygon for later checking wall facing direction
+                        # Extra, store the 2D floor polygon and center for wall positioning
                         floor_polygon = shapely.geometry.Polygon(floor_points[..., :2])
+                        floor_center = np.mean(floor_points[..., :2], axis=0)
                         
                     case "Ceiling":
                         pass
@@ -1143,6 +1146,39 @@ class BlenderScene:
                         # Translate the wall to the center of the two points and adjust the height
                         translation = np.mean([wall_from_to_points[0], wall_from_to_points[1]], axis=0)
                         translation += [0, 0, floor_height]
+                        
+                        # For scene-agent scenes, offset walls inward by full wall thickness.
+                        # Scene-agent exports wall coordinates at room boundaries, but the
+                        # inner wall surface (where objects touch) is offset inward by
+                        # the full wall thickness (not half).
+                        # See: scene_agent/wall_agents/tools/wall_surface.py _compute_wall_origin_and_length
+                        is_scene_agent = (
+                            self.scene_state is not None
+                            and self.scene_state.assetSource is not None
+                            and "scene-agent" in self.scene_state.assetSource
+                        )
+                        if is_scene_agent and element.depth is not None and floor_center is not None:
+                            wall_thickness = element.depth  # Full thickness, not half
+                            # Determine inward normal based on wall position relative to floor center
+                            if np.isclose(wall_from_to_points[1][0], wall_from_to_points[0][0]):
+                                # Y-aligned wall (runs along Y axis)
+                                wall_x = wall_from_to_points[0][0]
+                                if wall_x > floor_center[0]:
+                                    # East wall: inward normal is -X
+                                    translation[0] -= wall_thickness
+                                else:
+                                    # West wall: inward normal is +X
+                                    translation[0] += wall_thickness
+                            else:
+                                # X-aligned wall (runs along X axis)
+                                wall_y = wall_from_to_points[0][1]
+                                if wall_y > floor_center[1]:
+                                    # North wall: inward normal is -Y
+                                    translation[1] -= wall_thickness
+                                else:
+                                    # South wall: inward normal is +Y
+                                    translation[1] += wall_thickness
+                        
                         wall.location = translation
                         for hole_name, hole in holes.items():
                             hole.location = translation
