@@ -110,7 +110,11 @@ class ObjArchRelationshipMetric(BaseMetric):
         # Collect floor trimesh objects and create BoundingBoxes for them
         floor_bboxes = {}
         floor_t_objs = {}
-        floor_ids = [arch_id for arch_id in self.scene.get_arch_ids() if arch_id.startswith("floor")]
+        # Filter to only IDs that exist in both b_architecture and t_architecture
+        # (Some methods like LayoutVLM load GLBs in Blender with different names than trimesh)
+        t_arch_ids = set(self.scene.t_architecture.keys())
+
+        floor_ids = [arch_id for arch_id in self.scene.get_arch_ids() if arch_id.startswith("floor") and arch_id in t_arch_ids]
         for floor_id in floor_ids:
             floor_bbox_center = self.scene.get_arch_bbox_center(floor_id)
             floor_bbox_half_size = self.scene.get_default_pose_arch_bbox_extents(floor_id) / 2
@@ -118,11 +122,11 @@ class ObjArchRelationshipMetric(BaseMetric):
             floor_bbox = BoundingBox(floor_bbox_center, floor_bbox_half_size, floor_coord_axes, cfg=self.cfg.bounding_box)
             floor_bboxes[floor_id] = floor_bbox
             floor_t_objs[floor_id] = self.scene.t_architecture[floor_id]
-        
+
         # Collect wall trimesh objects and create BoundingBoxes for them
         wall_bboxes = {}
         wall_t_objs = {}
-        wall_ids = [arch_id for arch_id in self.scene.get_arch_ids() if arch_id.startswith("wall")]
+        wall_ids = [arch_id for arch_id in self.scene.get_arch_ids() if arch_id.startswith("wall") and arch_id in t_arch_ids]
         for wall_id in wall_ids:
             wall_bbox_center = self.scene.get_arch_bbox_center(wall_id)
             wall_bbox_half_size = self.scene.get_default_pose_arch_bbox_extents(wall_id) / 2
@@ -134,7 +138,7 @@ class ObjArchRelationshipMetric(BaseMetric):
         # Collect door trimesh objects and create BoundingBoxes for them
         door_bboxes = {}
         door_t_objs = {}
-        door_ids = [arch_id for arch_id in self.scene.get_arch_ids() if arch_id.startswith("door")]
+        door_ids = [arch_id for arch_id in self.scene.get_arch_ids() if arch_id.startswith("door") and arch_id in t_arch_ids]
         for door_id in door_ids:
             door_bbox_center = self.scene.get_arch_bbox_center(door_id)
             door_bbox_half_size = self.scene.get_default_pose_arch_bbox_extents(door_id) / 2
@@ -142,11 +146,11 @@ class ObjArchRelationshipMetric(BaseMetric):
             door_bbox = BoundingBox(door_bbox_center, door_bbox_half_size, door_coord_axes, cfg=self.cfg.bounding_box)
             door_bboxes[door_id] = door_bbox
             door_t_objs[door_id] = self.scene.t_architecture[door_id]
-        
+
         # Collect window trimesh objects and create BoundingBoxes for them
         window_bboxes = {}
         window_t_objs = {}
-        window_ids = [arch_id for arch_id in self.scene.get_arch_ids() if arch_id.startswith("window")]
+        window_ids = [arch_id for arch_id in self.scene.get_arch_ids() if arch_id.startswith("window") and arch_id in t_arch_ids]
         for window_id in window_ids:
             window_bbox_center = self.scene.get_arch_bbox_center(window_id)
             window_bbox_half_size = self.scene.get_default_pose_arch_bbox_extents(window_id) / 2

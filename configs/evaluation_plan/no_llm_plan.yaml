@@ -53,7 +53,7 @@ render_cfg:
   normal_render_tasks:
     - scene_top
     - obj_solo
-    # - obj_size
+    - obj_size
     - obj_surroundings
     # - obj_global_top
   semantic_render_tasks:

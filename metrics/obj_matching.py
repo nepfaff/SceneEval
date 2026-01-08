@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from warnings import warn
+import numpy as np
 from pydantic import BaseModel
 from scenes import Scene, Annotation
 from vlm import BaseVLM

@@ -120,22 +120,32 @@ def _fetch_scene_state_files(model_cfg: DictConfig, evaluation_plan: EvaluationP
     return scenes_per_method
     
 def _render_scene(scene: Scene, render_tasks: list[str]) -> None:
+    logger.info(f"_render_scene called with render_tasks={render_tasks}")
     for render_task in render_tasks:
+        logger.info(f"Processing render_task: {render_task}")
         match render_task:
             case "scene_top":
+                logger.info("Executing scene_top render")
                 scene.blender_scene.render_scene_from_top()
             case "obj_solo":
+                logger.info("Executing obj_solo render")
                 scene.blender_scene.render_all_objs_front_solo()
             case "obj_size":
+                logger.info("Executing obj_size render (size reference with human)")
                 scene.blender_scene.render_all_objs_front_size_reference()
             case "obj_surroundings":
+                logger.info("Executing obj_surroundings render")
                 scene.blender_scene.render_all_objs_front_surroundings()
             case "obj_global_top":
+                logger.info("Executing obj_global_top render")
                 scene.blender_scene.render_all_objs_global_top()
             case "room_views":
                 # Room views are rendered from original blend files
                 # This case is handled separately in the main loop
+                logger.info("room_views task - handled separately in main loop")
                 pass
+            case _:
+                logger.warning(f"Unknown render_task: {render_task}")
 
 
 def _copy_and_render_original_sceneweaver_blend(scene: Scene, method_scene_file: pathlib.Path, output_dir: pathlib.Path, resolution: int = 512) -> None:

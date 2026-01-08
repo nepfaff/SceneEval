@@ -4,7 +4,7 @@ defaults:
   - models
   - metrics
   - vlms
-  - evaluation_plan: no_llm_plan
+  - evaluation_plan: eval_plan
 
 seed: 42
 

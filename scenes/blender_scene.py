@@ -1500,6 +1500,7 @@ class BlenderScene:
         if with_human_reference and self.b_human is not None:
             bpy.ops.object.select_all(action="DESELECT")
             self.b_human.select_set(True)
+            bpy.context.view_layer.objects.active = self.b_human
             self.b_human.hide_render = False
             self.b_human.matrix_world = b_obj.matrix_world
             bpy.ops.transform.translate(value=(-(obj_dimensions[0] * 0.5 + self.b_human.dimensions[0] * 0.5), 0, 0), orient_type="LOCAL")
@@ -1600,9 +1601,11 @@ class BlenderScene:
         Render the front view of each of the objects without any surroundings.
         """
 
+        logger.info(f"render_all_objs_front_solo called, num_objs={len(self.b_objs)}")
         relative_dir = pathlib.Path(self.blender_cfg.object_render_subdir)
         for obj_id, b_obj in self.b_objs.items():
             relative_file_path = relative_dir / f"{obj_id}.{self.blender_cfg.render_file_format.lower()}"
+            logger.info(f"Rendering solo for {obj_id} to {relative_file_path}")
             self.render_one_obj(b_obj, relative_file_path, hide_others=True, zoom_out=False, with_human_reference=False)
 
     def render_all_objs_front_size_reference(self) -> None:
@@ -1610,16 +1613,24 @@ class BlenderScene:
         Render the front view of each of the objects with a human model for size comparison.
         """
 
+        logger.info(f"render_all_objs_front_size_reference called, b_human={self.b_human}, num_objs={len(self.b_objs)}")
+        if self.b_human is None:
+            logger.warning("No human model loaded - size reference renders will not include human. "
+                          "Check that blender_cfg.human_model path exists.")
+        
         relative_dir = pathlib.Path(self.blender_cfg.object_render_subdir)
         for obj_id, b_obj in self.b_objs.items():
             relative_file_path = relative_dir / f"size_{obj_id}.{self.blender_cfg.render_file_format.lower()}"
+            logger.info(f"Rendering size reference for {obj_id} to {relative_file_path}")
             self.render_one_obj(b_obj, relative_file_path, hide_others=True, zoom_out=False, with_human_reference=True, bird_view_degree=80)
+            logger.info(f"Finished rendering size reference for {obj_id}")
 
     def render_all_objs_front_surroundings(self) -> None:
         """
         Render the front view of each of the objects with surroundings.
         """
 
+        logger.info(f"render_all_objs_front_surroundings called, num_objs={len(self.b_objs)}")
         relative_dir = pathlib.Path(self.blender_cfg.object_render_subdir)
         for obj_id, b_obj in self.b_objs.items():
             relative_file_path = relative_dir / f"surroundings_{obj_id}.{self.blender_cfg.render_file_format.lower()}"
@@ -1630,6 +1641,7 @@ class BlenderScene:
         Render the global top view of each of the objects.
         """
 
+        logger.info(f"render_all_objs_global_top called, num_objs={len(self.b_objs)}")
         relative_dir = pathlib.Path(self.blender_cfg.object_render_subdir)
         for obj_id, b_obj in self.b_objs.items():
             relative_file_path = relative_dir / f"top_{obj_id}.{self.blender_cfg.render_file_format.lower()}"
