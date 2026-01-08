@@ -322,11 +322,19 @@ class AccessibilityMetric(BaseMetric):
                 access_area_extents = [self.cfg.access_area_width, obj_scaled_extents[1]]
         
         # Compute the center of the access area
-        obj_default_pose_center = self.scene.get_default_pose_obj_bbox_center(obj_id)
+        # Transform the access direction by the object's rotation to get the actual world-space direction
+        obj_matrix = np.asarray(self.scene.get_obj_matrix(obj_id))
+        access_direction_world = obj_matrix[:3, :3] @ access_area_direction  # Rotate direction vector
+        
+        # Calculate offset distance from object center
         distance_from_center = access_area_distance + self.cfg.access_area_width / 2 + self.cfg.access_area_offset
-        access_area_default_pose_center = obj_default_pose_center + access_area_direction * distance_from_center
-        access_area_center = (np.asarray(self.scene.get_obj_matrix(obj_id)) @ np.append(access_area_default_pose_center, 1))[:3]
-        access_area_center = (access_area_center - self.t_floor_center)[:2]
+        
+        # Place access area offset from object center in world space
+        obj_center_world = self.scene.get_obj_bbox_center(obj_id)
+        access_area_center_world = obj_center_world + access_direction_world * distance_from_center
+        
+        # Convert to floor-centered 2D coordinates
+        access_area_center = (access_area_center_world - self.t_floor_center)[:2]
         
         # Debug logging for bed
         if 'bed' in obj_id.lower():
