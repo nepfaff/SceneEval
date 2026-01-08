@@ -717,6 +717,7 @@ class ArchitecturalWeldedEquilibriumMetricSceneAgentConfig:
         displacement_threshold: Maximum displacement for an object to be "stable" (meters).
         rotation_threshold: Maximum rotation for an object to be "stable" (radians).
         save_simulation_html: If True, save meshcat visualization to HTML file.
+        weld_floor_objects: If True, also weld floor-supported objects.
     """
 
     simulation_time: float = 5.0
@@ -954,6 +955,7 @@ class CombinedWeldedEquilibriumMetricSceneAgentConfig:
         rotation_threshold: Maximum rotation for an object to be "stable" (radians).
         penetration_threshold: Minimum penetration depth to weld objects (meters).
         save_simulation_html: If True, save meshcat visualization to HTML file.
+        weld_floor_objects: If True, also weld floor-supported objects.
     """
 
     simulation_time: float = 5.0

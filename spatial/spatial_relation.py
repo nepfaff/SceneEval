@@ -6,14 +6,6 @@ from .config import SpatialRelationConfig
 
 logger = logging.getLogger(__name__)
 
-SIDE_MAP = {
-    "left": "-x",
-    "right": "+x",
-    "front": "-y",
-    "back": "+y",
-    "top": "+z",
-    "bottom": "-z"
-}
 
 class SpatialRelationEvaluator:
 
@@ -29,6 +21,29 @@ class SpatialRelationEvaluator:
         self.cfg = cfg
         self.front_vector = front_vector if front_vector is not None else np.array([0, -1, 0])
         self.up_vector = np.array([0, 0, 1])
+
+        # Build side_map based on front_vector
+        # Determine which axis is "front" based on front_vector
+        if np.allclose(self.front_vector, [0, -1, 0]):
+            front_axis, back_axis = "-y", "+y"
+        elif np.allclose(self.front_vector, [0, 1, 0]):
+            front_axis, back_axis = "+y", "-y"
+        elif np.allclose(self.front_vector, [-1, 0, 0]):
+            front_axis, back_axis = "-x", "+x"
+        elif np.allclose(self.front_vector, [1, 0, 0]):
+            front_axis, back_axis = "+x", "-x"
+        else:
+            # Default fallback
+            front_axis, back_axis = "-y", "+y"
+
+        self.side_map = {
+            "left": "-x",
+            "right": "+x",
+            "front": front_axis,
+            "back": back_axis,
+            "top": "+z",
+            "bottom": "-z"
+        }
     
     def inside_of(self, target_bbox: BoundingBox, reference_bbox: BoundingBox, **kwargs) -> float:
         """
@@ -125,15 +140,15 @@ class SpatialRelationEvaluator:
             score: the score in [0.0, 1.0]
         """
 
-        assert side in SIDE_MAP, f"Invalid side: {side}, accepted values: {list(SIDE_MAP.keys())}"
-        
+        assert side in self.side_map, f"Invalid side: {side}, accepted values: {list(self.side_map.keys())}"
+
         sample_points = target_bbox.sample_points()
         at_side = reference_bbox.at_side(sample_points,
-                                         SIDE_MAP[side],
+                                         self.side_map[side],
                                          no_contain=self.cfg.side_of.no_contain,
                                          within_area_margin=self.cfg.side_of.within_area_margin)
         score = np.sum(at_side) / len(sample_points)
-        
+
         # _debug_visualize([target_bbox, reference_bbox], [sample_points[at_side], sample_points[~at_side]], ["r", "k"], ["g", "b"], f"Side of: {side}, score: {score}")
 
         return score
@@ -147,17 +162,17 @@ class SpatialRelationEvaluator:
             target_bbox: the target bounding box
             reference_bbox: the reference bounding box
             side: the side to check (left, right, front, back, top, bottom)
-        
+
         Returns:
             score: the score in [0.0, 1.0]
         """
 
-        assert side in SIDE_MAP, f"Invalid side: {side}, accepted values: {list(SIDE_MAP.keys())}"
-        
-        sample_points = target_bbox.sample_points() 
+        assert side in self.side_map, f"Invalid side: {side}, accepted values: {list(self.side_map.keys())}"
+
+        sample_points = target_bbox.sample_points()
         contains = reference_bbox.contains(sample_points)
         at_side = reference_bbox.at_side(sample_points,
-                                         SIDE_MAP[side],
+                                         self.side_map[side],
                                          no_contain=self.cfg.side_region.no_contain,
                                          within_area_margin=self.cfg.side_region.within_area_margin)
         at_side_region = at_side & contains

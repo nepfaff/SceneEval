@@ -159,7 +159,12 @@ class Scene:
             matrix: The 4x4 transformation matrix of the architecture element
         """
 
-        return self.blender_scene.b_architecture[arch_id].matrix_world
+        # Check if arch exists in Blender scene
+        if arch_id in self.blender_scene.b_architecture:
+            return self.blender_scene.b_architecture[arch_id].matrix_world
+        # For Trimesh-only arch (procedural), return identity matrix
+        # These meshes are already in world coordinates
+        return Matrix.Identity(4)
     
     def get_obj_z_rotation(self, obj_id: str) -> float:
         """
@@ -218,12 +223,15 @@ class Scene:
         Args:
             arch_id: the architecture element ID
         """
-        
+
         new_t_arch = self.t_architecture[arch_id].copy()
-        arch_world_matrix = self.get_arch_matrix(arch_id)
-        arch_to_default_pose_matrix = arch_world_matrix.inverted()
-        new_t_arch.apply_transform(arch_to_default_pose_matrix)
-        
+        # Only apply inverse transform if arch exists in Blender
+        # For Trimesh-only arch (procedural), mesh is already in default pose
+        if arch_id in self.blender_scene.b_architecture:
+            arch_world_matrix = self.get_arch_matrix(arch_id)
+            arch_to_default_pose_matrix = arch_world_matrix.inverted()
+            new_t_arch.apply_transform(arch_to_default_pose_matrix)
+
         return new_t_arch
     
     def get_default_pose_obj_bbox_center(self, obj_id: str) -> np.ndarray:

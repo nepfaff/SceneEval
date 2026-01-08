@@ -254,10 +254,17 @@ class TrimeshScene:
                         # Create a floor plane by first creating a polygon and then extruding it
                         floor_points_2D = np.asarray(element.points)[..., :2]
                         floor_polygon = shapely.Polygon(floor_points_2D)
-                        floor = trimesh.creation.extrude_polygon(floor_polygon, arch_thickness)
-                        
-                        # Translate the floor to the correct height
-                        floor.apply_translation([0, 0, floor_height - arch_thickness / 2])
+
+                        # Use element.depth from JSON (e.g., 0.1m) for floor thickness
+                        # This provides proper collision geometry for physics simulation
+                        # Walls stay at arch_thickness (1mm) for multi-room compatibility
+                        floor_depth = element.depth if element.depth else arch_thickness
+                        floor = trimesh.creation.extrude_polygon(floor_polygon, floor_depth)
+
+                        # Position floor so TOP is at floor_height (z=0)
+                        # extrude_polygon creates mesh from z=0 to z=floor_depth
+                        # To put top at floor_height, translate by (floor_height - floor_depth)
+                        floor.apply_translation([0, 0, floor_height - floor_depth])
                         
                         # Rename the floor for identification and add it to the scene
                         floor_name = f"floor_{element.roomId.replace(' ', '_')}"
