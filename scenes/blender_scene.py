@@ -1605,6 +1605,10 @@ class BlenderScene:
             if zoom_out:
                 # Do not hide closeby objects that are supposed to be in view
                 blocking_objs = [b_obj for b_obj in blocking_objs if b_obj not in close_to_objs]
+                
+                # Do not hide walls in surroundings view - they provide important
+                # context for VLM to identify wall-mounted objects.
+                blocking_archs = [b_arch for b_arch in blocking_archs if "wall" not in b_arch.name.lower()]
             self._set_elements_hide_render(b_objs=blocking_objs, b_archs=blocking_archs, hide=True)
         
         # --------------------------------------------
