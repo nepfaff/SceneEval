@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from warnings import warn
+import json
 import numpy as np
 from pydantic import BaseModel
 from scenes import Scene, Annotation
@@ -111,7 +112,7 @@ class ObjMatching(BaseMetric):
 
             # Prepare prompt info with dimensions
             prompt_info = {
-                "target_categories": str(self.target_categories),
+                "target_categories": json.dumps(self.target_categories),
                 "object_dimensions": dimensions_str
             }
 

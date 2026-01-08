@@ -165,7 +165,103 @@ class Scene:
         # For Trimesh-only arch (procedural), return identity matrix
         # These meshes are already in world coordinates
         return Matrix.Identity(4)
-    
+
+    def get_arch_orientation(self, arch_id: str) -> Matrix:
+        """
+        Get the 3x3 orientation matrix of an architectural element.
+
+        For walls, this represents the rotation that transforms the default front
+        vector [0, -1, 0] to the wall's actual front direction (pointing into the room).
+
+        This is separate from get_arch_matrix() because:
+        - get_arch_matrix() returns the full LOCAL→WORLD transform (for position calculations)
+        - get_arch_orientation() returns just the rotation (for orientation-dependent calculations)
+
+        For Trimesh-only elements, the mesh is already in world coordinates, so
+        get_arch_matrix() returns Identity. But the orientation still needs to be
+        computed from the mesh geometry.
+
+        Args:
+            arch_id: the architecture element ID
+
+        Returns:
+            matrix: The 3x3 orientation matrix of the architecture element
+        """
+        # For Blender elements, extract rotation from world matrix
+        if arch_id in self.blender_scene.b_architecture:
+            return self.blender_scene.b_architecture[arch_id].matrix_world.to_3x3()
+
+        # For Trimesh-only walls, compute orientation from mesh geometry
+        if arch_id.startswith("wall"):
+            return self._compute_wall_orientation(arch_id)
+
+        return Matrix.Identity(3)
+
+    def _compute_wall_orientation(self, wall_id: str) -> Matrix:
+        """
+        Compute wall orientation from mesh bounds and position relative to floor.
+
+        Uses geometric proximity to find the correct floor for multi-room scenes.
+        The orientation determines which direction is "front" (pointing into the room).
+
+        Args:
+            wall_id: the wall ID in t_architecture
+
+        Returns:
+            matrix: 3x3 rotation matrix that transforms [0, -1, 0] to wall's front direction
+        """
+        wall_mesh = self.t_architecture[wall_id]
+        wall_bounds = wall_mesh.bounds
+        wall_center = (wall_bounds[0] + wall_bounds[1]) / 2
+        wall_extents = wall_bounds[1] - wall_bounds[0]
+
+        # Find the floor this wall belongs to using geometric proximity
+        floor_keys = [k for k in self.t_architecture.keys() if k.startswith("floor")]
+        if not floor_keys:
+            return Matrix.Identity(3)
+
+        # Find floor that overlaps with or is closest to this wall
+        best_floor = None
+        best_distance = float('inf')
+        for floor_key in floor_keys:
+            floor_mesh = self.t_architecture[floor_key]
+            floor_bounds = floor_mesh.bounds
+            floor_center_2d = (floor_bounds[0][:2] + floor_bounds[1][:2]) / 2
+
+            # Check if wall overlaps with floor in XY plane
+            x_overlap = (wall_bounds[0][0] <= floor_bounds[1][0]) and (wall_bounds[1][0] >= floor_bounds[0][0])
+            y_overlap = (wall_bounds[0][1] <= floor_bounds[1][1]) and (wall_bounds[1][1] >= floor_bounds[0][1])
+
+            if x_overlap and y_overlap:
+                best_floor = floor_mesh
+                break
+
+            # Fallback: use closest floor by center distance
+            dist = np.linalg.norm(wall_center[:2] - floor_center_2d)
+            if dist < best_distance:
+                best_distance = dist
+                best_floor = floor_mesh
+
+        if best_floor is None:
+            return Matrix.Identity(3)
+
+        floor_center = (best_floor.bounds[0] + best_floor.bounds[1]) / 2
+
+        # Determine rotation angle based on wall alignment and position
+        # Goal: transform front_vector [0,-1,0] to point INTO the room
+        if wall_extents[0] > wall_extents[1]:  # X-aligned wall (runs along X axis)
+            if wall_center[1] < floor_center[1]:  # South wall - front should be +Y
+                angle = np.pi  # 180° rotation
+            else:  # North wall - front should be -Y
+                angle = 0  # No rotation needed
+        else:  # Y-aligned wall (runs along Y axis)
+            if wall_center[0] < floor_center[0]:  # West wall - front should be +X
+                angle = np.pi / 2  # 90° rotation
+            else:  # East wall - front should be -X
+                angle = -np.pi / 2  # -90° rotation
+
+        return Matrix.Rotation(angle, 3, 'Z')
+
     def get_obj_z_rotation(self, obj_id: str) -> float:
         """
         Get the object's rotation around the z-axis (up axis).

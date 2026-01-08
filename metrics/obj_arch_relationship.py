@@ -130,7 +130,10 @@ class ObjArchRelationshipMetric(BaseMetric):
         for wall_id in wall_ids:
             wall_bbox_center = self.scene.get_arch_bbox_center(wall_id)
             wall_bbox_half_size = self.scene.get_default_pose_arch_bbox_extents(wall_id) / 2
-            wall_coord_axes = self.scene.get_arch_matrix(wall_id).to_3x3()
+            # Use get_arch_orientation() for walls to correctly compute front direction
+            # This is critical for Trimesh-only walls (e.g., Holodeck) where get_arch_matrix()
+            # returns Identity but wall orientation is needed for corner/wall detection
+            wall_coord_axes = self.scene.get_arch_orientation(wall_id)
             wall_bbox = BoundingBox(wall_bbox_center, wall_bbox_half_size, wall_coord_axes, cfg=self.cfg.bounding_box)
             wall_bboxes[wall_id] = wall_bbox
             wall_t_objs[wall_id] = self.scene.t_architecture[wall_id]
