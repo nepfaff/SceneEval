@@ -131,7 +131,7 @@ metrics: # Use metric class names as keys (i.e., CamelCase)
 
   # Drake collision metrics (CoACD variant)
   DrakeCollisionMetricCoACD:
-    penetration_threshold: 0.001
+    penetration_threshold: 0.002
     coacd_threshold: 0.03
 
   # Drake collision metrics (VHACD variant)

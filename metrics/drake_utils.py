@@ -656,14 +656,13 @@ def generate_floor_sdf(
     t_architecture: dict[str, trimesh.Trimesh],
     output_dir: Path,
     use_rigid_hydroelastic: bool = False,
-    wall_expansion: float = 0.5,
-    floor_expansion: float = 0.5,
+    wall_expansion: float = 0.0,
+    floor_expansion: float = 0.0,
 ) -> Path:
     """Generate SDF file for floor/architecture using box primitives.
 
     Uses Drake box primitives for collision geometry instead of mesh geometry.
     This is more robust for hydroelastic contact and avoids degenerate mesh issues.
-    Boxes are expanded outward from the room to avoid reducing usable space.
 
     Args:
         t_architecture: Dictionary of architecture trimesh objects.
