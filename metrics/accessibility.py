@@ -327,6 +327,15 @@ class AccessibilityMetric(BaseMetric):
         access_area_default_pose_center = obj_default_pose_center + access_area_direction * distance_from_center
         access_area_center = (np.asarray(self.scene.get_obj_matrix(obj_id)) @ np.append(access_area_default_pose_center, 1))[:3]
         access_area_center = (access_area_center - self.t_floor_center)[:2]
+        
+        # Debug logging for bed
+        if 'bed' in obj_id.lower():
+            logger.info(f"  Access area for {obj_id} - {side}:")
+            logger.info(f"    Default pose center: {obj_default_pose_center}")
+            logger.info(f"    Access direction: {access_area_direction}")
+            logger.info(f"    Distance from center: {distance_from_center:.3f}m")
+            logger.info(f"    Access center (world): {access_area_center + self.t_floor_center}")
+            logger.info(f"    Access center (floor-centered): {access_area_center}")
 
         # Compute where the access area is on the image
         on_image_center = self._scene_to_image_coordinates(access_area_center[0], access_area_center[1], self.scale)
