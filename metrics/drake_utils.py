@@ -1432,6 +1432,17 @@ def create_drake_plant_from_scene_agent(
     obj_id_to_model_name = {}
     obj_transforms = {}  # obj_id -> (translation, rpy_degrees)
 
+    # Normalize weld_to_world IDs - they may be prefixed (e.g., "idx7_scene-agent.scene_0__artwork_0")
+    # but scene JSON uses raw IDs (e.g., "artwork_0"). Extract raw IDs for matching.
+    weld_to_world_raw = set()
+    for wid in weld_to_world:
+        if "__" in wid:
+            weld_to_world_raw.add(wid.split("__")[-1])
+        else:
+            weld_to_world_raw.add(wid)
+    if weld_to_world_raw:
+        console_logger.info(f"Welding {len(weld_to_world_raw)} object(s) to world: {list(weld_to_world_raw)}")
+
     # Get carpet object IDs to exclude from physics simulation.
     # carpet_obj_ids uses prefixed names (e.g., "idx5_scene-agent.scene_0__rug_0")
     # but scene JSON uses raw names (e.g., "rug_0"). Extract raw names for matching.
@@ -1553,7 +1564,7 @@ def create_drake_plant_from_scene_agent(
             temp_dir=temp_dir,
             obj_id_to_model_name=obj_id_to_model_name,
             obj_transforms=obj_transforms,
-            weld_to_world=weld_to_world,
+            weld_to_world=weld_to_world_raw,  # Use normalized IDs
             floor_plan_sdf_path=floor_plan_dst,
         )
 
