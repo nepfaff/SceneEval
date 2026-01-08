@@ -325,6 +325,7 @@ class AccessibilityMetric(BaseMetric):
         # Transform the access direction by the object's rotation to get the actual world-space direction
         obj_matrix = np.asarray(self.scene.get_obj_matrix(obj_id))
         access_direction_world = obj_matrix[:3, :3] @ access_area_direction  # Rotate direction vector
+        access_direction_world = access_direction_world / np.linalg.norm(access_direction_world)  # Normalize (matrix includes scale)
         
         # Calculate offset distance from object center
         distance_from_center = access_area_distance + self.cfg.access_area_width / 2 + self.cfg.access_area_offset
