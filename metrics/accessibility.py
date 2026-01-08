@@ -1,4 +1,5 @@
 import cv2
+import logging
 import pathlib
 import trimesh
 import numpy as np
@@ -10,6 +11,8 @@ from scenes import Scene
 from vlm import BaseVLM
 from .base import BaseMetric, MetricResult
 from .registry import register_vlm_metric
+
+logger = logging.getLogger(__name__)
 
 # ----------------------------------------------------------------------------------------
 
@@ -177,16 +180,24 @@ class AccessibilityMetric(BaseMetric):
         # Schema: [center_x, center_y, extent_x, extent_y, angle_around_z]
         # Exclude carpets/rugs since they don't block accessibility (you can walk over them)
         carpet_ids = self.scene.carpet_obj_ids
+        logger.info(f"AccessibilityMetric: scene.carpet_obj_ids = {carpet_ids}")
+        logger.info(f"AccessibilityMetric: Total objects = {len(self.scene.get_obj_ids())}")
+        
         non_carpet_obj_ids = [
             obj_id for obj_id in self.scene.get_obj_ids()
             if obj_id not in carpet_ids
         ]
         
+        logger.info(f"AccessibilityMetric: Non-carpet objects = {len(non_carpet_obj_ids)}")
         if carpet_ids:
-            print(f"[AccessibilityMetric] Excluding {len(carpet_ids)} carpet(s) from obstacle drawing: {list(carpet_ids)}")
+            logger.info(f"AccessibilityMetric: Excluding {len(carpet_ids)} carpet(s) from obstacle drawing: {list(carpet_ids)}")
+        else:
+            logger.warning(f"AccessibilityMetric: NO CARPETS DETECTED! carpet_obj_ids is empty!")
         
         obj_bboxes = np.empty((0, 5))
+        logger.info(f"AccessibilityMetric: Starting object bbox loop with {len(non_carpet_obj_ids)} non-carpet objects")
         for obj_id in non_carpet_obj_ids:
+            logger.debug(f"AccessibilityMetric: Processing object {obj_id}")
             
             # Get the object center and extents
             obj_bbox_center = self.scene.get_obj_bbox_center(obj_id) - self.t_floor_center
@@ -208,6 +219,7 @@ class AccessibilityMetric(BaseMetric):
             bbox_info = np.asarray([*obj_bbox_center[:2], *obj_bbox_extents[:2], rotation_angle])
             obj_bboxes = np.vstack([obj_bboxes, bbox_info])
 
+        logger.info(f"AccessibilityMetric: Will draw {len(obj_bboxes)} object bboxes on mask")
         # Draw object bounding boxes
         for bbox_info in obj_bboxes:
             center_x, center_y, extent_x, extent_y, rotation_angle = bbox_info

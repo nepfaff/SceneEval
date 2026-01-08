@@ -167,9 +167,11 @@ def merge_articulated_meshes(sdf_dir: Path) -> Path | None:
     (doors, drawers, body). This merges them into a single mesh that Blender
     can import correctly as one object.
 
-    Also applies the scale factor from the SDF file, as articulated objects
-    from PartNet-Mobility often have scale factors baked into the SDF but not
-    the GLTF meshes.
+    Also applies:
+    - 180° rotation around Y axis to match Drake's orientation (combined_scene.gltf
+      is exported with a different orientation than what Drake produces)
+    - Scale factor from the SDF file (PartNet-Mobility objects often have scale
+      factors baked into the SDF but not the GLTF meshes)
 
     Args:
         sdf_dir: Directory containing combined_scene.gltf
@@ -177,6 +179,8 @@ def merge_articulated_meshes(sdf_dir: Path) -> Path | None:
     Returns:
         Path to merged file (combined_merged.glb), or None if merging failed
     """
+    import numpy as np
+
     combined_scene_path = sdf_dir / "combined_scene.gltf"
     merged_output_path = sdf_dir / "combined_merged.glb"
 
@@ -210,6 +214,14 @@ def merge_articulated_meshes(sdf_dir: Path) -> Path | None:
             # Concatenate all meshes into one
             merged = trimesh.util.concatenate(meshes)
 
+            # Apply 180° rotation around Y axis to match Drake's orientation
+            # combined_scene.gltf is exported from Blender with a different
+            # orientation than what Drake produces when loading the SDF
+            rotation_180_y = trimesh.transformations.rotation_matrix(
+                np.pi, [0, 1, 0]  # 180° around Y axis
+            )
+            merged.apply_transform(rotation_180_y)
+
             # Apply SDF scale factor if not 1.0
             if scale_factor != 1.0:
                 merged.apply_scale(scale_factor)
@@ -218,7 +230,11 @@ def merge_articulated_meshes(sdf_dir: Path) -> Path | None:
             return merged_output_path
 
         elif isinstance(scene, trimesh.Trimesh):
-            # Already a single mesh
+            # Already a single mesh - apply rotation and scale
+            rotation_180_y = trimesh.transformations.rotation_matrix(
+                np.pi, [0, 1, 0]
+            )
+            scene.apply_transform(rotation_180_y)
             if scale_factor != 1.0:
                 scene.apply_scale(scale_factor)
             scene.export(str(merged_output_path))
