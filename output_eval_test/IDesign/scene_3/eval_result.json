@@ -35,7 +35,7 @@
     ],
     "results": {
         "AccessibilityMetric": {
-            "message": "Accessibility score for all objects: [0.0, 0.0, -1, -1, 0.0, 0.0, 0.38461538461538464, 0.0, -1, -1, 0.9230769230769231]",
+            "message": "Accessibility score for all objects: [0.0, 0.0, -1, -1, 0.0, 0.0, -1, 0.0, -1, -1, 0.9230769230769231]",
             "data": {
                 "idx0_idesign.scene_3__double_bed_1": {
                     "front": 0.0,
@@ -68,8 +68,7 @@
                     "max": 0.0
                 },
                 "idx6_idesign.scene_3__painting_1": {
-                    "front": 0.38461538461538464,
-                    "max": 0.38461538461538464
+                    "max": -1
                 },
                 "idx7_idesign.scene_3__wardrobe_1": {
                     "front": 0.0,
