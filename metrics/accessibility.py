@@ -338,14 +338,15 @@ class AccessibilityMetric(BaseMetric):
         
         # Debug logging for bed
         if 'bed' in obj_id.lower():
-            access_center_world = np.append(access_area_center, 0) + self.t_floor_center
+            access_center_world_3d = np.append(access_area_center, 0) + self.t_floor_center
+            obj_center_floor = self.scene.get_obj_bbox_center(obj_id) - self.t_floor_center
             logger.info(f"  Access area for {obj_id} - {side}:")
-            logger.info(f"    Default pose center: {obj_default_pose_center}")
-            logger.info(f"    Access direction: {access_area_direction}")
+            logger.info(f"    Access direction (world): {access_direction_world}")
             logger.info(f"    Distance from center: {distance_from_center:.3f}m")
-            logger.info(f"    Access center (world XY): ({access_center_world[0]:.3f}, {access_center_world[1]:.3f})")
+            logger.info(f"    Object center (world): ({obj_center_world[0]:.3f}, {obj_center_world[1]:.3f})")
+            logger.info(f"    Access center (world): ({access_area_center_world[0]:.3f}, {access_area_center_world[1]:.3f})")
             logger.info(f"    Access center (floor-centered): ({access_area_center[0]:.3f}, {access_area_center[1]:.3f})")
-            logger.info(f"    Object bbox center (floor-centered): ({(self.scene.get_obj_bbox_center(obj_id) - self.t_floor_center)[0]:.3f}, {(self.scene.get_obj_bbox_center(obj_id) - self.t_floor_center)[1]:.3f})")
+            logger.info(f"    Object bbox center (floor-centered): ({obj_center_floor[0]:.3f}, {obj_center_floor[1]:.3f})")
 
         # Compute where the access area is on the image
         on_image_center = self._scene_to_image_coordinates(access_area_center[0], access_area_center[1], self.scale)
