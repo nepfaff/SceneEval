@@ -69,7 +69,7 @@ wheels = [
 
 [[package]]
 name = "bpy"
-version = "4.2.13"
+version = "5.0.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cython" },
@@ -78,10 +78,10 @@ dependencies = [
     { name = "zstandard" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/f9/e1/4d1f56e9bd17c16ccd852c12310c6da917a65373223cab4a9404488b3ff3/bpy-4.2.13-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:df0d0e2687b914b177e45f03a029b2b472f1d46264e8e9f676529383570b16b0", size = 207935529, upload-time = "2025-08-22T09:24:01.508Z" },
-    { url = "https://files.pythonhosted.org/packages/9e/1c/8a7045c034e1838096b5d764234f7f3184e524ab465a66227dc80b4720d4/bpy-4.2.13-cp311-cp311-macosx_11_0_x86_64.whl", hash = "sha256:527afc392fbd8e2672190d98d7289f79d88e83d3ed251c42318e0cdb37de3a61", size = 220994311, upload-time = "2025-08-22T09:24:20.642Z" },
-    { url = "https://files.pythonhosted.org/packages/5d/f9/403a2c1919d82b61b7deae671238d8c500599542dd754e53e1086c4670c0/bpy-4.2.13-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:fdb62394cbe005289803679f86d21ab48498ce1fae439b3e279318663caea0dd", size = 519509928, upload-time = "2025-08-22T09:24:52.07Z" },
-    { url = "https://files.pythonhosted.org/packages/3c/23/d8680955f50fb7f970fa6acd5c53300f0714c6307c330a5c0023e186b619/bpy-4.2.13-cp311-cp311-win_amd64.whl", hash = "sha256:0e5d580bb51cc71ba2c9ef3935cddd192d0b366c98b47abc570cb7f4cbcf7b75", size = 315622925, upload-time = "2025-08-22T09:23:36.537Z" },
+    { url = "https://files.pythonhosted.org/packages/80/ac/b6a3e733f07f70637f86fb16d64d69664a97bdeb7386ab84bd128cb96a31/bpy-5.0.1-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:92e2a9b62a17d41387a08e9f10fa68e843c2af91e7b1c557b8fd6a52ff1115e8", size = 228420793, upload-time = "2025-12-16T15:01:04.483Z" },
+    { url = "https://files.pythonhosted.org/packages/79/62/bdc90f457acc6a82325f563c2b87cd57f5c3d6a7de2e23fdba8e640c9437/bpy-5.0.1-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:79c6e421f53ea24a5961d86eefb8141798eee708682415eb4f5a952c2abdeb8b", size = 374257847, upload-time = "2025-12-16T15:00:44.123Z" },
+    { url = "https://files.pythonhosted.org/packages/6e/34/06ad77a826ae6cc2ee428bf0ac50528a92dff9bd85ac79303a2ce946ae77/bpy-5.0.1-cp311-cp311-win_amd64.whl", hash = "sha256:4c456809d3651e4850a336283dd73ceda64d7b7f5769490956e10d832c2e7347", size = 328327800, upload-time = "2025-12-16T15:01:27.456Z" },
+    { url = "https://files.pythonhosted.org/packages/69/51/623e94ca35966162c4aa8968a1a5cf189870945eef57c70892225201fc1b/bpy-5.0.1-cp311-cp311-win_arm64.whl", hash = "sha256:fe98f7c7229dd7273bb143533de1b88c871744f4210140dc6bf3280a5b90dde6", size = 201961589, upload-time = "2025-12-16T15:01:48.587Z" },
 ]
 
 [[package]]
@@ -1201,7 +1201,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "attrs" },
-    { name = "bpy", specifier = "==4.2.13" },
+    { name = "bpy", specifier = "==5.0.1" },
     { name = "coacd" },
     { name = "drake" },
     { name = "embreex" },

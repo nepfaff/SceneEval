@@ -83,10 +83,29 @@ class AccessibilityMetric(BaseMetric):
         self.half_image_resolution = self.cfg.image_resolution // 2
         self.obj_info = [f"obj_id: '{obj_id}', obj_description: '{self.scene.obj_descriptions[obj_id]}'" for obj_id in self.scene.get_obj_ids()]
         
+        # Get floor architecture with defensive checking
+        print(f"[AccessibilityMetric] Checking scene architecture...")
+        print(f"[AccessibilityMetric] Available architecture keys: {list(scene.t_architecture.keys())}")
+        
         t_floors = [t_arch for arch_id, t_arch in scene.t_architecture.items() if arch_id.startswith("floor")]
+        
+        if not t_floors:
+            raise ValueError(
+                f"No floor architecture found in scene! "
+                f"Available architecture keys: {list(scene.t_architecture.keys())}\n"
+                f"This usually means t_architecture wasn't properly loaded during scene creation."
+            )
+        
+        print(f"[AccessibilityMetric] Found {len(t_floors)} floor(s)")
         self.t_floor = trimesh.util.concatenate(t_floors)
+        print(f"[AccessibilityMetric] Floor mesh: {self.t_floor.vertices.shape[0]} vertices, {self.t_floor.faces.shape[0]} faces")
+        
         self.t_floor_center = self.t_floor.bounds[0] + self.t_floor.extents / 2
+        print(f"[AccessibilityMetric] Floor center: {self.t_floor_center}")
+        print(f"[AccessibilityMetric] Floor bounds: {self.t_floor.bounds}")
+        
         self.scale = self._get_scale(self.t_floor.vertices, self.t_floor_center)
+        print(f"[AccessibilityMetric] Scale: {self.scale}")
     
     def _get_scale(self, floor_vertices: np.ndarray, floor_center: np.ndarray) -> float:
         """
@@ -135,6 +154,8 @@ class AccessibilityMetric(BaseMetric):
             mask: the floor mask
         """
 
+        print(f"[AccessibilityMetric] Generating floor mask...")
+        
         # Initialize the floor mask
         mask = np.zeros((self.cfg.image_resolution, self.cfg.image_resolution, 3), dtype=np.uint8)
 
@@ -142,6 +163,8 @@ class AccessibilityMetric(BaseMetric):
         floor_vertices = self.t_floor.vertices - self.t_floor_center
         floor_vertices = floor_vertices[:, :2] # Ignore z coordinate (height)
 
+        print(f"[AccessibilityMetric] Drawing {self.t_floor.faces.shape[0]} floor faces...")
+        
         # Draw floor
         for face in self.t_floor.faces:
             face_vertices = floor_vertices[face]
@@ -152,8 +175,18 @@ class AccessibilityMetric(BaseMetric):
 
         # Prepare object bounding box info
         # Schema: [center_x, center_y, extent_x, extent_y, angle_around_z]
+        # Exclude carpets/rugs since they don't block accessibility (you can walk over them)
+        carpet_ids = self.scene.carpet_obj_ids
+        non_carpet_obj_ids = [
+            obj_id for obj_id in self.scene.get_obj_ids()
+            if obj_id not in carpet_ids
+        ]
+        
+        if carpet_ids:
+            print(f"[AccessibilityMetric] Excluding {len(carpet_ids)} carpet(s) from obstacle drawing: {list(carpet_ids)}")
+        
         obj_bboxes = np.empty((0, 5))
-        for obj_id in self.scene.get_obj_ids():
+        for obj_id in non_carpet_obj_ids:
             
             # Get the object center and extents
             obj_bbox_center = self.scene.get_obj_bbox_center(obj_id) - self.t_floor_center
@@ -189,6 +222,20 @@ class AccessibilityMetric(BaseMetric):
             
             # Draw the object bbox
             cv2.fillPoly(mask, [box_points], self.cfg.obj_color)
+        
+        # Count pixels by color to verify mask correctness
+        red_pixels = np.sum(np.all(mask == self.cfg.floor_color, axis=-1))
+        green_pixels = np.sum(np.all(mask == self.cfg.obj_color, axis=-1))
+        black_pixels = np.sum(np.all(mask == [0, 0, 0], axis=-1))
+        total_pixels = self.cfg.image_resolution * self.cfg.image_resolution
+        
+        print(f"[AccessibilityMetric] Mask pixel counts:")
+        print(f"  Red (floor): {red_pixels} ({100 * red_pixels / total_pixels:.1f}%)")
+        print(f"  Green (objects): {green_pixels} ({100 * green_pixels / total_pixels:.1f}%)")
+        print(f"  Black (out of bounds): {black_pixels} ({100 * black_pixels / total_pixels:.1f}%)")
+        
+        if red_pixels == 0:
+            print(f"[AccessibilityMetric] WARNING: No floor pixels drawn! This will cause 0.0 accessibility scores.")
         
         plt.title("Accessibility - Mask")
         plt.imshow(mask[:, :, ::-1])

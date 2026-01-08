@@ -12,12 +12,10 @@ dependencies = [
     "hydra-core",
     "matplotlib",
     "natsort",
-
     # For GPT/VLM
     "openai",
     "python-dotenv",
     "pydantic",
-
     # For Trimesh
     "trimesh[easy]>=4,<5",
     "pyglet<2",
@@ -27,31 +25,24 @@ dependencies = [
     "rtree",
     "shapely",
     "mapbox_earcut",
-
     # For navigability and accessibility metrics
     "opencv-python",
-
     # For data generation
     "flask",
-
     # Collision detection and geometry processing
     "python-fcl",
     "manifold3d",
     "embreex",
-
     # Drake physics simulation
     "drake",
     "coacd",
     "vhacdx>=0.0.8.post2",  # For VHACD convex decomposition
-
     # Blender
-    "bpy==4.2.13",
+    "bpy==5.0.1",
     "mathutils",
     "fake-bpy-module-4.2",
-
     # For setup script
     "gdown",
-
     # For Objathor/Holodeck asset preparation
     "objathor",
     "attrs",

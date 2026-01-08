@@ -81,7 +81,9 @@ class SceneAgentAssetDataset(BaseAssetDataset):
                     )
 
                 # Build full SDF path: root_dir/scene_X/assets/{sdf_relative_path}
-                sdf_path = self.root_dir / f"scene_{scene_id}" / "assets" / sdf_relative_path
+                sdf_path = (
+                    self.root_dir / f"scene_{scene_id}" / "assets" / sdf_relative_path
+                )
 
                 if not sdf_path.exists():
                     raise FileNotFoundError(
@@ -97,12 +99,10 @@ class SceneAgentAssetDataset(BaseAssetDataset):
                     file_path=gltf_path,
                     description=f"{obj_id} (scene-agent)",
                     extra_rotation_transform=None,
-                    sdf_path=sdf_path
+                    sdf_path=sdf_path,
                 )
 
-        raise FileNotFoundError(
-            f"Object {obj_id} not found in scene_{scene_id}.json"
-        )
+        raise FileNotFoundError(f"Object {obj_id} not found in scene_{scene_id}.json")
 
     @lru_cache(maxsize=32)
     def _load_scene_json(self, scene_json_path: Path) -> dict:
@@ -123,7 +123,13 @@ class SceneAgentAssetDataset(BaseAssetDataset):
 
     def _extract_gltf_from_sdf(self, sdf_path: Path) -> Path:
         """
-        Parse SDF XML to get GLTF path from <visual><geometry><mesh><uri>.
+        Get the visual GLTF path for an SDF file.
+
+        For articulated objects (cabinets, dressers with drawers/doors), scene-agent
+        exports a combined_scene.gltf that merges all link meshes at zero joint
+        positions. We prefer this file to avoid loading only a single link.
+
+        Falls back to parsing the SDF for single-link objects.
 
         Args:
             sdf_path: Path to SDF file
@@ -131,6 +137,14 @@ class SceneAgentAssetDataset(BaseAssetDataset):
         Returns:
             Absolute path to GLTF file
         """
+        # Prefer combined_scene.gltf for articulated objects (all links merged
+        # at zero joint position). This is exported by scene-agent for objects
+        # with multiple links (doors, drawers, etc.)
+        combined_gltf = sdf_path.parent / "combined_scene.gltf"
+        if combined_gltf.exists():
+            return combined_gltf
+
+        # Fall back to parsing SDF for single-link objects
         tree = ET.parse(sdf_path)
         root = tree.getroot()
 
@@ -147,12 +161,8 @@ class SceneAgentAssetDataset(BaseAssetDataset):
                         gltf_path = sdf_path.parent / uri.text
 
                         if not gltf_path.exists():
-                            raise FileNotFoundError(
-                                f"GLTF file not found: {gltf_path}"
-                            )
+                            raise FileNotFoundError(f"GLTF file not found: {gltf_path}")
 
                         return gltf_path
 
-        raise ValueError(
-            f"Could not find visual mesh URI in SDF: {sdf_path}"
-        )
+        raise ValueError(f"Could not find visual mesh URI in SDF: {sdf_path}")
