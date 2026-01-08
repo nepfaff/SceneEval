@@ -1373,9 +1373,13 @@ class BlenderScene:
         # Raycast against all architectural elements
         blocking_archs = []
         for b_arch_other in self.b_architecture.values():
-            
+
             # Do not consider the floor for blocking the line of sight
             if "floor" in b_arch_other.name:
+                continue
+
+            # Skip objects without mesh data (e.g., empty objects)
+            if b_arch_other.type != 'MESH' or b_arch_other.data is None:
                 continue
             
             # Transform the ray origin and directions to the local space of the architectural element
