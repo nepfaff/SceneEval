@@ -78,9 +78,9 @@ def is_carpet_object(obj_id: str, description: str = "", sdf_path: str | Path = 
     """
     id_lower = obj_id.lower()
 
-    # For SceneAgent objects, check if SDF has collision geometry
+    # If SDF path is provided, check if it has collision geometry
     # Objects without collision geometry are thin coverings (rugs, floor mats)
-    if "scene-agent" in id_lower and sdf_path is not None:
+    if sdf_path is not None:
         if is_thin_covering_sceneagent(sdf_path):
             return True
 

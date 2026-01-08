@@ -34,7 +34,7 @@ input_cfg:
     - SceneAgent
   method_use_simple_architecture: []
   scene_mode: range # all, range, list
-  scene_range: [0, 100] # Left inclusive, right exclusive
+  scene_range: [0, 210] # Left inclusive, right exclusive
   scene_list: []
   annotation_file: ./input/annotations.csv
 

@@ -121,6 +121,65 @@ def _fix_invalid_inertia_in_sdf(sdf_path: Path) -> None:
         console_logger.warning(f"Failed to parse SDF {sdf_path}: {e}")
 
 
+def extract_base_link_name_from_sdf(sdf_path: Path) -> str:
+    """Extract the root link name from an SDF file.
+
+    For articulated objects with joints, finds the link that is not a child of
+    any joint (the root of the kinematic tree). For simple single-link objects,
+    returns the first link found.
+
+    This is needed because PartNet-Mobility articulated objects use link names
+    like "E_body_3" instead of "base_link".
+
+    Args:
+        sdf_path: Path to the SDF file.
+
+    Returns:
+        The name of the root link in the SDF file.
+
+    Raises:
+        ValueError: If no links are found in the SDF file.
+    """
+    try:
+        tree = ET.parse(sdf_path)
+        root = tree.getroot()
+
+        # Collect all link names.
+        all_links: set[str] = set()
+        for link in root.findall(".//link"):
+            if "name" in link.attrib:
+                all_links.add(link.attrib["name"])
+
+        if not all_links:
+            raise ValueError(f"No link elements found in SDF file: {sdf_path}")
+
+        # Collect all child links from joints.
+        child_links: set[str] = set()
+        for joint in root.findall(".//joint"):
+            child_elem = joint.find("child")
+            if child_elem is not None and child_elem.text:
+                child_links.add(child_elem.text.strip())
+
+        # Root link is one that is not a child of any joint.
+        root_links = all_links - child_links
+
+        if root_links:
+            # If multiple roots exist, prefer one that contains "body" or "base".
+            for link_name in root_links:
+                if "body" in link_name.lower() or "base" in link_name.lower():
+                    return link_name
+            # Otherwise return any root link.
+            return next(iter(root_links))
+
+        # Fallback: if all links are children (circular or no joints), return first.
+        return next(iter(all_links))
+
+    except ET.ParseError as e:
+        raise ValueError(f"Failed to parse SDF file {sdf_path}: {e}")
+    except FileNotFoundError:
+        raise ValueError(f"SDF file not found: {sdf_path}")
+
+
 def generate_collision_geometry(
     mesh: trimesh.Trimesh, threshold: float = 0.05, **kwargs
 ) -> list[trimesh.Trimesh]:
@@ -1112,6 +1171,47 @@ def detect_penetrating_pairs(
     return unique_pairs
 
 
+def _get_root_body_for_model(plant: MultibodyPlant, model_instance) -> "RigidBody":
+    """Get the root body for a model instance.
+
+    For articulated objects, finds the body that is not a child of any joint
+    (the root of the kinematic tree). For simple single-body objects, returns
+    the only body.
+
+    Args:
+        plant: Drake MultibodyPlant.
+        model_instance: The model instance to query.
+
+    Returns:
+        The root RigidBody for the model.
+
+    Raises:
+        ValueError: If no suitable body is found.
+    """
+    body_indices = plant.GetBodyIndices(model_instance)
+    if not body_indices:
+        raise ValueError("No bodies found in model instance")
+
+    # For single-body models, just return it.
+    if len(body_indices) == 1:
+        return plant.get_body(body_indices[0])
+
+    # For multi-body (articulated) models, find the root body.
+    # The root body is not a child of any joint in this model.
+    child_bodies = set()
+    for joint_idx in plant.GetJointIndices(model_instance):
+        joint = plant.get_joint(joint_idx)
+        child_bodies.add(joint.child_body().index())
+
+    # Find bodies that are not children of any joint.
+    for body_idx in body_indices:
+        if body_idx not in child_bodies:
+            return plant.get_body(body_idx)
+
+    # Fallback: return first body.
+    return plant.get_body(body_indices[0])
+
+
 def measure_displacement(
     plant: MultibodyPlant,
     initial_context,
@@ -1141,10 +1241,9 @@ def measure_displacement(
 
     for obj_id, model_name in obj_id_to_model_name.items():
         try:
-            # Get body.
-            body = plant.GetBodyByName(
-                "base_link", plant.GetModelInstanceByName(model_name)
-            )
+            # Get root body for this model (handles articulated objects).
+            model_instance = plant.GetModelInstanceByName(model_name)
+            body = _get_root_body_for_model(plant, model_instance)
 
             # Get initial and final poses.
             initial_pose = plant.EvalBodyPoseInWorld(initial_context, body)
@@ -1333,10 +1432,30 @@ def create_drake_plant_from_scene_agent(
     obj_id_to_model_name = {}
     obj_transforms = {}  # obj_id -> (translation, rpy_degrees)
 
+    # Get carpet object IDs to exclude from physics simulation.
+    # carpet_obj_ids uses prefixed names (e.g., "idx5_scene-agent.scene_0__rug_0")
+    # but scene JSON uses raw names (e.g., "rug_0"). Extract raw names for matching.
+    carpet_ids_full = scene.carpet_obj_ids if hasattr(scene, 'carpet_obj_ids') else set()
+    carpet_ids_raw = set()
+    for cid in carpet_ids_full:
+        # Extract raw ID after the last "__" (e.g., "rug_0" from "idx5_scene-agent.scene_0__rug_0")
+        if "__" in cid:
+            carpet_ids_raw.add(cid.split("__")[-1])
+        else:
+            carpet_ids_raw.add(cid)
+    if carpet_ids_raw:
+        console_logger.info(f"Excluding {len(carpet_ids_raw)} carpet(s) from SceneAgent Drake plant: {list(carpet_ids_raw)}")
+
     try:
         # Process each object.
         for obj in objects:
             obj_id = obj["id"]
+
+            # Skip carpet objects - they don't simulate well (thin geometry).
+            if obj_id in carpet_ids_raw:
+                console_logger.info(f"Skipping carpet object: {obj_id}")
+                continue
+
             sdf_path = obj.get("sdfPath", "")
 
             if not sdf_path:
@@ -1555,13 +1674,19 @@ def _build_drake_directives_scene_agent(
             continue
         sdf_file = sdf_files[0]
 
+        # Extract root link name from SDF (handles articulated objects like nightstands).
+        try:
+            link_name = extract_base_link_name_from_sdf(sdf_file)
+        except ValueError:
+            link_name = "base_link"  # Fallback
+
         lines.extend(
             [
                 "- add_model:",
                 f'    name: "{model_name}"',
                 f'    file: "file://{sdf_file}"',
                 f"    default_free_body_pose:",
-                f"      base_link:",
+                f"      {link_name}:",
                 f"        translation: [{translation[0]:.6f}, {translation[1]:.6f}, {translation[2]:.6f}]",
                 f"        rotation: !Rpy {{ deg: [{rpy_deg[0]:.6f}, {rpy_deg[1]:.6f}, {rpy_deg[2]:.6f}] }}",
             ]
@@ -1573,7 +1698,7 @@ def _build_drake_directives_scene_agent(
                 [
                     "- add_weld:",
                     '    parent: "world"',
-                    f'    child: "{model_name}::base_link"',
+                    f'    child: "{model_name}::{link_name}"',
                     "    X_PC:",
                     f"      translation: [{translation[0]:.6f}, {translation[1]:.6f}, {translation[2]:.6f}]",
                     f"      rotation: !Rpy {{ deg: [{rpy_deg[0]:.6f}, {rpy_deg[1]:.6f}, {rpy_deg[2]:.6f}] }}",
