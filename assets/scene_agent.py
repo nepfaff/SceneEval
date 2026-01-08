@@ -125,11 +125,12 @@ class SceneAgentAssetDataset(BaseAssetDataset):
         """
         Get the visual GLTF path for an SDF file.
 
-        For articulated objects (cabinets, dressers with drawers/doors), scene-agent
-        exports a combined_scene.gltf that merges all link meshes at zero joint
-        positions. We prefer this file to avoid loading only a single link.
+        For articulated objects (cabinets, dressers with drawers/doors), we look for:
+        1. combined_merged.glb - Single mesh created by fix_articulated_meshes.py
+        2. Fall back to parsing the SDF for single-link objects
 
-        Falls back to parsing the SDF for single-link objects.
+        The combined_merged.glb is a single mesh with all articulated links merged,
+        which Blender can import as a single object with correct transforms.
 
         Args:
             sdf_path: Path to SDF file
@@ -137,12 +138,11 @@ class SceneAgentAssetDataset(BaseAssetDataset):
         Returns:
             Absolute path to GLTF file
         """
-        # Prefer combined_scene.gltf for articulated objects (all links merged
-        # at zero joint position). This is exported by scene-agent for objects
-        # with multiple links (doors, drawers, etc.)
-        combined_gltf = sdf_path.parent / "combined_scene.gltf"
-        if combined_gltf.exists():
-            return combined_gltf
+        # Prefer combined_merged.glb for articulated objects (single mesh with all
+        # links properly merged). Created by scripts/fix_articulated_meshes.py.
+        merged_glb = sdf_path.parent / "combined_merged.glb"
+        if merged_glb.exists():
+            return merged_glb
 
         # Fall back to parsing SDF for single-link objects
         tree = ET.parse(sdf_path)

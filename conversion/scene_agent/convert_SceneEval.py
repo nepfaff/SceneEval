@@ -32,6 +32,7 @@ This copies scene-agent output to SceneEval input format:
     - generated_assets/ -> scene_X/assets/
     - floor_plan.sdf -> scene_X/floor_plan.sdf (if available)
     - house.blend -> scene_X/assets/original_scene_agent.blend (if available)
+    - Articulated objects are merged into single meshes (combined_merged.glb)
 
 Note: Scene IDs are extracted from directory names by default (e.g., scene_002 -> scene_2).
 """
@@ -40,6 +41,8 @@ import json
 import shutil
 import argparse
 from pathlib import Path
+
+import trimesh
 
 
 def find_scene_state_path(scene_dir: Path) -> Path | None:
@@ -104,6 +107,107 @@ def find_blend_file(scene_dir: Path) -> Path | None:
         return old_path
 
     return None
+
+
+def is_articulated_sdf(sdf_dir: Path) -> bool:
+    """Check if an SDF directory contains an articulated object (multiple links)."""
+    combined_scene = sdf_dir / "combined_scene.gltf"
+    if not combined_scene.exists():
+        return False
+
+    # Check if there are multiple link meshes (E_*_combined.gltf files)
+    link_meshes = list(sdf_dir.glob("E_*_combined.gltf"))
+    return len(link_meshes) > 1
+
+
+def merge_articulated_meshes(sdf_dir: Path) -> Path | None:
+    """
+    Merge combined_scene.gltf into a single mesh file for articulated objects.
+
+    Articulated objects from scene-agent have separate meshes for each link
+    (doors, drawers, body). This merges them into a single mesh that Blender
+    can import correctly as one object.
+
+    Args:
+        sdf_dir: Directory containing combined_scene.gltf
+
+    Returns:
+        Path to merged file (combined_merged.glb), or None if merging failed
+    """
+    combined_scene_path = sdf_dir / "combined_scene.gltf"
+    merged_output_path = sdf_dir / "combined_merged.glb"
+
+    # Skip if already merged
+    if merged_output_path.exists():
+        return merged_output_path
+
+    try:
+        # Load the GLTF scene
+        scene = trimesh.load(str(combined_scene_path))
+
+        if isinstance(scene, trimesh.Scene):
+            # Get all geometry from the scene
+            meshes = []
+            for node_name in scene.graph.nodes_geometry:
+                transform, geometry_name = scene.graph[node_name]
+                geometry = scene.geometry[geometry_name]
+
+                if isinstance(geometry, trimesh.Trimesh):
+                    # Apply the node transform to the mesh
+                    mesh_copy = geometry.copy()
+                    mesh_copy.apply_transform(transform)
+                    meshes.append(mesh_copy)
+
+            if not meshes:
+                return None
+
+            # Concatenate all meshes into one
+            merged = trimesh.util.concatenate(meshes)
+            merged.export(str(merged_output_path))
+            return merged_output_path
+
+        elif isinstance(scene, trimesh.Trimesh):
+            # Already a single mesh
+            scene.export(str(merged_output_path))
+            return merged_output_path
+
+        return None
+
+    except Exception as e:
+        print(f"    Warning: Failed to merge meshes in {sdf_dir.name}: {e}")
+        return None
+
+
+def fix_articulated_meshes_in_scene(assets_dir: Path) -> int:
+    """
+    Fix all articulated meshes in a scene's assets directory.
+
+    Args:
+        assets_dir: Path to scene assets directory (e.g., scene_X/assets/)
+
+    Returns:
+        Number of articulated objects fixed
+    """
+    if not assets_dir.exists():
+        return 0
+
+    fixed_count = 0
+
+    for category in ["furniture", "manipuland", "wall_mounted", "ceiling_mounted"]:
+        sdf_base = assets_dir / category / "sdf"
+        if not sdf_base.exists():
+            continue
+
+        for sdf_dir in sdf_base.iterdir():
+            if not sdf_dir.is_dir():
+                continue
+
+            if is_articulated_sdf(sdf_dir):
+                result = merge_articulated_meshes(sdf_dir)
+                if result:
+                    fixed_count += 1
+
+    return fixed_count
 
 
 def convert_single_scene(scene_dir: Path, target_dir: Path, scene_id: int) -> None:
@@ -193,6 +297,11 @@ def convert_single_scene(scene_dir: Path, target_dir: Path, scene_id: int) -> No
         output_blend = assets_output_dir / "original_scene_agent.blend"
         print(f"  Copying {blend_path.relative_to(scene_dir)} -> assets/original_scene_agent.blend")
         shutil.copy2(blend_path, output_blend)
+
+    # Fix articulated objects by merging multi-link meshes into single files
+    fixed_count = fix_articulated_meshes_in_scene(assets_output_dir)
+    if fixed_count > 0:
+        print(f"  Merged {fixed_count} articulated objects into single meshes")
 
     print(f"  Done: scene_{scene_id}")
 

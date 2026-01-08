@@ -237,12 +237,16 @@ class AccessibilityMetric(BaseMetric):
         if red_pixels == 0:
             print(f"[AccessibilityMetric] WARNING: No floor pixels drawn! This will cause 0.0 accessibility scores.")
         
-        plt.title("Accessibility - Mask")
-        plt.imshow(mask[:, :, ::-1])
-        plt.savefig(self.output_dir / "a0_mask.png")
+        # Save mask using cv2 to preserve exact pixel values (matplotlib interpolates/resizes)
+        mask_bgr = cv2.cvtColor(mask, cv2.COLOR_RGB2BGR)
+        cv2.imwrite(str(self.output_dir / "a0_mask.png"), mask_bgr)
+        print(f"[AccessibilityMetric] Saved mask to: {self.output_dir / 'a0_mask.png'}")
+        
         if verbose:
+            plt.title("Accessibility - Mask")
+            plt.imshow(mask[:, :, ::-1])
             plt.show(block=True)
-        plt.close()
+            plt.close()
 
         return mask
     
@@ -327,12 +331,15 @@ class AccessibilityMetric(BaseMetric):
         if "instance" in self.scene.obj_descriptions[obj_id]:
             figure_short_obj_name += f"-{self.scene.obj_descriptions[obj_id].split('- ')[-1]}"
         
-        plt.title(f"Accessibility - {figure_short_obj_name} - {side} area")
-        plt.imshow(accessibility_map[:, :, ::-1])
-        plt.savefig(self.output_dir / f"a1_{obj_id}-{side}.png")
+        # Save using cv2 to preserve exact pixel values
+        accessibility_map_bgr = cv2.cvtColor(accessibility_map, cv2.COLOR_RGB2BGR)
+        cv2.imwrite(str(self.output_dir / f"a1_{obj_id}-{side}.png"), accessibility_map_bgr)
+        
         if verbose:
+            plt.title(f"Accessibility - {figure_short_obj_name} - {side} area")
+            plt.imshow(accessibility_map[:, :, ::-1])
             plt.show(block=True)
-        plt.close()
+            plt.close()
         
         # Compute the accessibility score as the ratio of the access area on the floor that is not blocked by other objects
         area_mask_size = np.sum(access_area_size_canvas == 255)
