@@ -225,10 +225,11 @@ class AccessibilityMetric(BaseMetric):
         logger.info(f"AccessibilityMetric: Will draw {len(obj_bboxes)} object bboxes on mask")
         logger.info(f"AccessibilityMetric: Objects to be drawn: {obj_bbox_ids}")
         
-        # Log bbox details for debugging
+        # Log bbox details for debugging (especially bed and large objects)
         for i, (obj_id, bbox_info) in enumerate(zip(obj_bbox_ids, obj_bboxes)):
             center_x, center_y, extent_x, extent_y, rotation_angle = bbox_info
-            logger.debug(f"  [{i}] {obj_id}: center=({center_x:.3f}, {center_y:.3f}), extents=({extent_x:.3f}, {extent_y:.3f}), rot={np.rad2deg(rotation_angle):.1f}°")
+            if 'bed' in obj_id.lower() or extent_x * extent_y > 1.5:  # Log bed and large objects
+                logger.info(f"  BBox[{i}] {obj_id}: center=({center_x:.3f}, {center_y:.3f}), extents=({extent_x:.3f}, {extent_y:.3f}), rot={np.rad2deg(rotation_angle):.1f}°")
         
         # Draw object bounding boxes
         for bbox_info in obj_bboxes:

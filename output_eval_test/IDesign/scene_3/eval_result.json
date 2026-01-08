@@ -35,7 +35,7 @@
     ],
     "results": {
         "AccessibilityMetric": {
-            "message": "Accessibility score for all objects: [0.0, 0.0, -1, -1, 0.0, 0.0, -1, 0.0, -1, -1, 0.9230769230769231]",
+            "message": "Accessibility score for all objects: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -1, 0.0, 0.6153846153846154, -1, 0.9230769230769231]",
             "data": {
                 "idx0_idesign.scene_3__double_bed_1": {
                     "front": 0.0,
@@ -48,10 +48,18 @@
                     "max": 0.0
                 },
                 "idx2_idesign.scene_3__bedside_table_1": {
-                    "max": -1
+                    "front": 0.0,
+                    "back": 0.0,
+                    "left": 0.0,
+                    "right": 0.0,
+                    "max": 0.0
                 },
                 "idx3_idesign.scene_3__bedside_table_2": {
-                    "max": -1
+                    "front": 0.0,
+                    "back": 0.0,
+                    "left": 0.0,
+                    "right": 0.0,
+                    "max": 0.0
                 },
                 "idx4_idesign.scene_3__table_1": {
                     "front": 0.0,
@@ -75,7 +83,11 @@
                     "max": 0.0
                 },
                 "idx8_idesign.scene_3__floor_lamp_1": {
-                    "max": -1
+                    "front": 0.6153846153846154,
+                    "back": 0.07692307692307693,
+                    "left": 0.5384615384615384,
+                    "right": 0.5384615384615384,
+                    "max": 0.6153846153846154
                 },
                 "idx9_idesign.scene_3__area_rug_1": {
                     "max": -1
