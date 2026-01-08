@@ -201,8 +201,14 @@ class Scene:
         """
         Compute wall orientation from mesh bounds and position relative to floor.
 
-        Uses geometric proximity to find the correct floor for multi-room scenes.
-        The orientation determines which direction is "front" (pointing into the room).
+        For multi-room scenes, parses room name from wall ID to find the correct floor.
+        Falls back to geometric proximity if room name cannot be extracted.
+
+        Holodeck wall ID format: wall_wall|<room>|<direction>|<idx>[|exterior]
+        Example: wall_wall|bedroom|west|0 or wall_wall|bedroom|west|0|exterior
+
+        The orientation determines which direction is "front" (pointing into the room
+        for interior walls, or out of the room for exterior walls).
 
         Args:
             wall_id: the wall ID in t_architecture
@@ -215,32 +221,59 @@ class Scene:
         wall_center = (wall_bounds[0] + wall_bounds[1]) / 2
         wall_extents = wall_bounds[1] - wall_bounds[0]
 
-        # Find the floor this wall belongs to using geometric proximity
+        # Check if this is an exterior wall (front should point OUT of room)
+        is_exterior = "exterior" in wall_id.lower()
+
+        # Find the floor this wall belongs to
         floor_keys = [k for k in self.t_architecture.keys() if k.startswith("floor")]
         if not floor_keys:
             return Matrix.Identity(3)
 
-        # Find floor that overlaps with or is closest to this wall
         best_floor = None
-        best_distance = float('inf')
-        for floor_key in floor_keys:
-            floor_mesh = self.t_architecture[floor_key]
-            floor_bounds = floor_mesh.bounds
-            floor_center_2d = (floor_bounds[0][:2] + floor_bounds[1][:2]) / 2
 
-            # Check if wall overlaps with floor in XY plane
-            x_overlap = (wall_bounds[0][0] <= floor_bounds[1][0]) and (wall_bounds[1][0] >= floor_bounds[0][0])
-            y_overlap = (wall_bounds[0][1] <= floor_bounds[1][1]) and (wall_bounds[1][1] >= floor_bounds[0][1])
+        # Strategy 1: Parse room name from wall ID (Holodeck convention)
+        # Wall ID format: wall_wall|<room>|<direction>|<idx>[|exterior]
+        # or: wall_<numeric_id> (IDesign)
+        room_name = self._extract_room_from_wall_id(wall_id)
+        if room_name:
+            # Look for matching floor
+            target_floor_key = f"floor_{room_name}"
+            if target_floor_key in self.t_architecture:
+                best_floor = self.t_architecture[target_floor_key]
 
-            if x_overlap and y_overlap:
-                best_floor = floor_mesh
-                break
+        # Strategy 2: Geometric proximity (fallback)
+        if best_floor is None:
+            best_distance = float('inf')
+            for floor_key in floor_keys:
+                floor_mesh = self.t_architecture[floor_key]
+                floor_bounds = floor_mesh.bounds
+                floor_center_2d = (floor_bounds[0][:2] + floor_bounds[1][:2]) / 2
 
-            # Fallback: use closest floor by center distance
-            dist = np.linalg.norm(wall_center[:2] - floor_center_2d)
-            if dist < best_distance:
-                best_distance = dist
-                best_floor = floor_mesh
+                # Check if wall overlaps with floor in XY plane
+                x_overlap = (wall_bounds[0][0] <= floor_bounds[1][0]) and (wall_bounds[1][0] >= floor_bounds[0][0])
+                y_overlap = (wall_bounds[0][1] <= floor_bounds[1][1]) and (wall_bounds[1][1] >= floor_bounds[0][1])
+
+                if x_overlap and y_overlap:
+                    # For overlapping floors, prefer the one where wall is on boundary
+                    # (wall center is near floor min/max in one dimension)
+                    wall_on_boundary = (
+                        np.isclose(wall_center[0], floor_bounds[0][0], atol=0.1) or
+                        np.isclose(wall_center[0], floor_bounds[1][0], atol=0.1) or
+                        np.isclose(wall_center[1], floor_bounds[0][1], atol=0.1) or
+                        np.isclose(wall_center[1], floor_bounds[1][1], atol=0.1)
+                    )
+                    if wall_on_boundary:
+                        best_floor = floor_mesh
+                        break
+                    elif best_floor is None:
+                        best_floor = floor_mesh
+
+                # Fallback: use closest floor by center distance
+                dist = np.linalg.norm(wall_center[:2] - floor_center_2d)
+                if dist < best_distance:
+                    best_distance = dist
+                    if best_floor is None:
+                        best_floor = floor_mesh
 
         if best_floor is None:
             return Matrix.Identity(3)
@@ -260,7 +293,40 @@ class Scene:
             else:  # East wall - front should be -X
                 angle = -np.pi / 2  # -90° rotation
 
+        # For exterior walls, flip the direction (front points OUT of room)
+        if is_exterior:
+            angle += np.pi
+
         return Matrix.Rotation(angle, 3, 'Z')
+
+    def _extract_room_from_wall_id(self, wall_id: str) -> str | None:
+        """
+        Extract room name from wall ID.
+
+        Holodeck format: wall_wall|<room>|<direction>|<idx>[|exterior]
+        Example: wall_wall|bedroom|west|0 -> "bedroom"
+
+        Args:
+            wall_id: the wall ID
+
+        Returns:
+            room_name: the room name, or None if cannot be extracted
+        """
+        # Try Holodeck format: wall_wall|<room>|<direction>|<idx>
+        if wall_id.startswith("wall_wall|"):
+            parts = wall_id[len("wall_"):].split("|")
+            if len(parts) >= 2:
+                return parts[1]  # parts[0] is "wall", parts[1] is room name
+
+        # Try simpler format: wall_<room>_<direction>_<idx>
+        if wall_id.startswith("wall_") and "_" in wall_id[5:]:
+            parts = wall_id[5:].split("_")
+            if len(parts) >= 2:
+                # Check if first part looks like a room name (not a number)
+                if not parts[0].isdigit():
+                    return parts[0]
+
+        return None
 
     def get_obj_z_rotation(self, obj_id: str) -> float:
         """
