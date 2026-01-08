@@ -35,56 +35,10 @@
     ],
     "results": {
         "AccessibilityMetric": {
-            "message": "Accessibility score for all objects: [0.0, 0.0, -1, -1, 0.0, 0.0, 0.38461538461538464, 0.0, -1, -1, 0.9230769230769231]",
+            "message": "Metric AccessibilityMetric failed with error: operands could not be broadcast together with shapes (2,) (3,) ",
             "data": {
-                "idx0_idesign.scene_3__double_bed_1": {
-                    "front": 0.0,
-                    "left": 0.0,
-                    "right": 0.0,
-                    "max": 0.0
-                },
-                "idx1_idesign.scene_3__mini_fridge_1": {
-                    "front": 0.0,
-                    "max": 0.0
-                },
-                "idx2_idesign.scene_3__bedside_table_1": {
-                    "max": -1
-                },
-                "idx3_idesign.scene_3__bedside_table_2": {
-                    "max": -1
-                },
-                "idx4_idesign.scene_3__table_1": {
-                    "front": 0.0,
-                    "back": 0.0,
-                    "left": 0.0,
-                    "right": 0.0,
-                    "max": 0.0
-                },
-                "idx5_idesign.scene_3__chair_1": {
-                    "front": 0.0,
-                    "back": 0.0,
-                    "left": 0.0,
-                    "right": 0.0,
-                    "max": 0.0
-                },
-                "idx6_idesign.scene_3__painting_1": {
-                    "front": 0.38461538461538464,
-                    "max": 0.38461538461538464
-                },
-                "idx7_idesign.scene_3__wardrobe_1": {
-                    "front": 0.0,
-                    "max": 0.0
-                },
-                "idx8_idesign.scene_3__floor_lamp_1": {
-                    "max": -1
-                },
-                "idx9_idesign.scene_3__area_rug_1": {
-                    "max": -1
-                },
-                "idx10_idesign.scene_3__bookshelf_1": {
-                    "front": 0.9230769230769231,
-                    "max": 0.9230769230769231
-                }
+                "error": "operands could not be broadcast together with shapes (2,) (3,) ",
+                "traceback": "Traceback (most recent call last):\n  File \"/home/ubuntu/SceneEval/main.py\", line 1256, in main\n    result = metric_instance.run(evaluation_plan.evaluation_cfg.verbose)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/ubuntu/SceneEval/metrics/accessibility.py\", line 422, in run\n    accessibility_scores[obj_id][side] = self._get_accessibility_score(floor_mask, obj_id, side, verbose=verbose)\n                                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/ubuntu/SceneEval/metrics/accessibility.py\", line 337, in _get_accessibility_score\n    logger.info(f\"    Access center (world): {access_area_center + self.t_floor_center}\")\n                                              ~~~~~~~~~~~~~~~~~~~^~~~~~~~~~~~~~~~~~~~~\nValueError: operands could not be broadcast together with shapes (2,) (3,) \n"
             }
         }
     }
