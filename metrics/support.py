@@ -29,7 +29,7 @@ class SupportMetricConfig:
     num_samples_per_square_meter: int = 256
     min_num_samples: int = 32
     max_total_num_samples: int = 1e5
-    support_distance_threshold: float = 0.01
+    support_distance_threshold: float = 0.015  # 1.5cm to account for epsilon offset during ray casting
     epsilon: float = 0.005
     normal_facing_threshold: float = 0.9
     use_existing_support_type_assessment: bool = False

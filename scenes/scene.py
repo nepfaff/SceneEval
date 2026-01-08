@@ -125,11 +125,15 @@ class Scene:
         """
         Get the architecture element IDs in the scene.
 
+        Uses Trimesh architecture IDs for consistent naming with metrics.
+        This ensures names like "floor_kitchen", "wall_1" match the filtering
+        logic in metrics (e.g., arch_id.startswith("floor")).
+
         Returns:
             arch_ids: the architecture element IDs in the scene
         """
 
-        return list(self.blender_scene.b_architecture.keys())
+        return list(self.trimesh_scene.t_architecture.keys())
     
     def get_obj_matrix(self, obj_id: str) -> Matrix:
         """
