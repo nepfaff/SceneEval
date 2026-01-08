@@ -100,6 +100,12 @@ class ObjMatching(BaseMetric):
 
             # Get object dimensions (XYZ extents in meters)
             obj_extents = self.scene.get_default_pose_obj_bbox_extents(obj_id)
+
+            # Apply the object's scale to the default pose extents
+            obj_matrix = np.asarray(self.scene.get_obj_matrix(obj_id))
+            obj_scale = np.array([np.linalg.norm(obj_matrix[:3, i]) for i in range(3)])
+            obj_extents = obj_extents * obj_scale
+
             dimensions_str = f"Width: {obj_extents[0]*100:.1f}cm, Depth: {obj_extents[1]*100:.1f}cm, Height: {obj_extents[2]*100:.1f}cm"
 
             # Prepare prompt info with dimensions

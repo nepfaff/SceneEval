@@ -155,9 +155,14 @@ class AccessibilityMetric(BaseMetric):
         obj_bboxes = np.empty((0, 5))
         for obj_id in self.scene.get_obj_ids():
             
-            # Get the object center and extents in the default pose
+            # Get the object center and extents
             obj_bbox_center = self.scene.get_obj_bbox_center(obj_id) - self.t_floor_center
             obj_bbox_extents = self.scene.get_default_pose_obj_bbox_extents(obj_id)
+
+            # Apply the object's scale to the default pose extents
+            obj_matrix = np.asarray(self.scene.get_obj_matrix(obj_id))
+            obj_scale = np.array([np.linalg.norm(obj_matrix[:3, i]) for i in range(3)])
+            obj_bbox_extents = obj_bbox_extents * obj_scale
 
             # Ignore objects above the height threshold
             if obj_bbox_center[2] > self.cfg.obj_height_threshold:
@@ -228,13 +233,19 @@ class AccessibilityMetric(BaseMetric):
                 access_area_direction = np.array([front_vector[1], -front_vector[0], 0])
         
         obj_default_pose_bbox_extents = self.scene.get_default_pose_obj_bbox_extents(obj_id)
+
+        # Apply the object's scale to the default pose extents
+        obj_matrix = np.asarray(self.scene.get_obj_matrix(obj_id))
+        obj_scale = np.array([np.linalg.norm(obj_matrix[:3, i]) for i in range(3)])
+        obj_scaled_extents = obj_default_pose_bbox_extents * obj_scale
+
         match side:
             case "front" | "back":
-                access_area_distance = obj_default_pose_bbox_extents[1] / 2
-                access_area_extents = [obj_default_pose_bbox_extents[0], self.cfg.access_area_width]
+                access_area_distance = obj_scaled_extents[1] / 2
+                access_area_extents = [obj_scaled_extents[0], self.cfg.access_area_width]
             case "left" | "right":
-                access_area_distance = obj_default_pose_bbox_extents[0] / 2
-                access_area_extents = [self.cfg.access_area_width, obj_default_pose_bbox_extents[1]]
+                access_area_distance = obj_scaled_extents[0] / 2
+                access_area_extents = [self.cfg.access_area_width, obj_scaled_extents[1]]
         
         # Compute the center of the access area
         obj_default_pose_center = self.scene.get_default_pose_obj_bbox_center(obj_id)

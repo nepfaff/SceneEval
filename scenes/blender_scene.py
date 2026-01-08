@@ -1515,7 +1515,7 @@ class BlenderScene:
             b_obj_child.select_set(True)
         
         # Select the human model if needed
-        if with_human_reference:
+        if with_human_reference and self.b_human is not None:
             self.b_human.select_set(True)
             
         # Select objects that are close to the target object

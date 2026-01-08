@@ -157,9 +157,16 @@ class NavigabilityMetric(BaseMetric):
         obj_bboxes = np.empty((0, 5))
         for obj_id in self.scene.get_obj_ids():
             
-            # Get the object center and extents in the default pose
+            # Get the object center and extents
             obj_bbox_center = self.scene.get_obj_bbox_center(obj_id) - self.t_floor_center
             obj_bbox_extents = self.scene.get_default_pose_obj_bbox_extents(obj_id)
+
+            # Apply the object's scale to the default pose extents
+            # This is needed because default pose removes scale, but some assets (e.g., IDesign)
+            # have significant scale factors that need to be applied for correct world-space size
+            obj_matrix = np.asarray(self.scene.get_obj_matrix(obj_id))
+            obj_scale = np.array([np.linalg.norm(obj_matrix[:3, i]) for i in range(3)])
+            obj_bbox_extents = obj_bbox_extents * obj_scale
 
             # Ignore objects above the height threshold
             if obj_bbox_center[2] > self.cfg.obj_height_threshold:
