@@ -18,7 +18,7 @@ input_cfg:
   method_use_simple_architecture: []
   scene_mode: list
   scene_range: [0, 1]
-  scene_list: [2]
+  scene_list: [3]
   annotation_file: ./input/annotations.csv
 
 render_cfg:

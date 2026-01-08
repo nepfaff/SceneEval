@@ -195,6 +195,7 @@ class AccessibilityMetric(BaseMetric):
             logger.warning(f"AccessibilityMetric: NO CARPETS DETECTED! carpet_obj_ids is empty!")
         
         obj_bboxes = np.empty((0, 5))
+        obj_bbox_ids = []  # Track which obj_ids are actually drawn
         logger.info(f"AccessibilityMetric: Starting object bbox loop with {len(non_carpet_obj_ids)} non-carpet objects")
         for obj_id in non_carpet_obj_ids:
             logger.debug(f"AccessibilityMetric: Processing object {obj_id}")
@@ -210,6 +211,7 @@ class AccessibilityMetric(BaseMetric):
 
             # Ignore objects above the height threshold
             if obj_bbox_center[2] > self.cfg.obj_height_threshold:
+                logger.info(f"AccessibilityMetric: Skipping {obj_id} (above height threshold: {obj_bbox_center[2]:.3f}m > {self.cfg.obj_height_threshold}m)")
                 continue
             
             # Get the object angle around the z-axis
@@ -218,8 +220,10 @@ class AccessibilityMetric(BaseMetric):
             # Store the object bounding box
             bbox_info = np.asarray([*obj_bbox_center[:2], *obj_bbox_extents[:2], rotation_angle])
             obj_bboxes = np.vstack([obj_bboxes, bbox_info])
+            obj_bbox_ids.append(obj_id)
 
         logger.info(f"AccessibilityMetric: Will draw {len(obj_bboxes)} object bboxes on mask")
+        logger.info(f"AccessibilityMetric: Objects to be drawn: {obj_bbox_ids}")
         # Draw object bounding boxes
         for bbox_info in obj_bboxes:
             center_x, center_y, extent_x, extent_y, rotation_angle = bbox_info
