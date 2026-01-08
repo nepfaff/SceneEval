@@ -237,6 +237,15 @@ class TrimeshScene:
             
         else:
             # Use the provided architecture
+            
+            # Compute floor center for wall positioning (needed for scene-agent offset)
+            floor_center = None
+            for element in architecture.elements:
+                if element.type == "Floor":
+                    floor_points = np.asarray(element.points)
+                    floor_center = np.mean(floor_points[..., :2], axis=0)
+                    break
+            
             for element in architecture.elements:
                 
                 # Check the element type
@@ -341,6 +350,32 @@ class TrimeshScene:
                         # Translate the wall to the center of the two points and adjust the height
                         translation = np.mean([wall_from_to_points[0], wall_from_to_points[1]], axis=0)
                         translation += [0, 0, floor_height - arch_thickness / 2 + element.height / 2]
+                        
+                        # For scene-agent scenes, offset walls inward by full wall thickness.
+                        # Scene-agent exports wall coordinates at room boundaries, but the
+                        # inner wall surface (where objects touch) is offset inward.
+                        is_scene_agent = (
+                            self.scene_state is not None
+                            and self.scene_state.assetSource is not None
+                            and "scene-agent" in self.scene_state.assetSource
+                        )
+                        if is_scene_agent and element.depth is not None and floor_center is not None:
+                            wall_thickness = element.depth
+                            if np.isclose(wall_from_to_points[1][0], wall_from_to_points[0][0]):
+                                # Y-aligned wall
+                                wall_x = wall_from_to_points[0][0]
+                                if wall_x > floor_center[0]:
+                                    translation[0] -= wall_thickness
+                                else:
+                                    translation[0] += wall_thickness
+                            else:
+                                # X-aligned wall
+                                wall_y = wall_from_to_points[0][1]
+                                if wall_y > floor_center[1]:
+                                    translation[1] -= wall_thickness
+                                else:
+                                    translation[1] += wall_thickness
+                        
                         wall.apply_translation(translation)
                         for hole in holes.values():
                             hole.apply_translation(translation)

@@ -325,7 +325,13 @@ class SupportMetric(BaseMetric):
                     evaluations[obj_id]["supported"] = False
                     print(f"{support_type.capitalize()} - Error creating convex hull: {e} -> Not supported - X")
                     continue
-                centroid_projection_pt, _, _ = contact_hull.ray.intersects_location(t_obj.centroid[None, :], gravity_direction[None, :], multiple_hits=False)
+                
+                # Use bounding box center instead of mesh centroid for stability check.
+                # For non-watertight meshes (e.g., merged articulated objects), the
+                # mesh centroid is vertex-weighted and can be biased. The bounding
+                # box center provides a more reliable "center of mass" approximation.
+                bbox_center = (t_obj.bounds[0] + t_obj.bounds[1]) / 2
+                centroid_projection_pt, _, _ = contact_hull.ray.intersects_location(bbox_center[None, :], gravity_direction[None, :], multiple_hits=False)
 
                 # Check if the centroid projection is in the convex hull
                 evaluations[obj_id]["supported"] = (len(centroid_projection_pt) == 1)

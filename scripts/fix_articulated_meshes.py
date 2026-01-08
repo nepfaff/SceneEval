@@ -157,9 +157,7 @@ def merge_combined_scene(sdf_dir: Path, force: bool = False) -> Path | None:
 
         elif isinstance(scene, trimesh.Trimesh):
             # Already a single mesh - apply rotation and scale
-            rotation_180_y = trimesh.transformations.rotation_matrix(
-                np.pi, [0, 1, 0]
-            )
+            rotation_180_y = trimesh.transformations.rotation_matrix(np.pi, [0, 1, 0])
             scene.apply_transform(rotation_180_y)
             if scale_factor != 1.0:
                 scene.apply_scale(scale_factor)
