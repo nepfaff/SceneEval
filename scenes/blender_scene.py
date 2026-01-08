@@ -1508,24 +1508,33 @@ class BlenderScene:
             bird_view_degree: the degree of the camera looking at the object (0 straight down, 90 side view)
         """
 
+        # Need this because models imported from .glb files can have multiple meshes within one root b_obj
+        obj_bounds = np.asarray(self.get_obj_bounds(b_obj.name))
+        obj_dimensions = obj_bounds[1] - obj_bounds[0]
+        obj_center_z = (obj_bounds[0][2] + obj_bounds[1][2]) / 2
+
         # Add a temporary camera that will be deleted after rendering
         b_camera = self._add_default_camera("camera_temp")
         bpy.context.scene.camera = b_camera
         b_camera.matrix_world = b_obj.matrix_world
+        
+        # Determine camera angle based on object height or explicit parameter
         if bird_view_degree is not None:
-            b_camera.rotation_euler[0] = np.deg2rad(bird_view_degree)
+            angle = bird_view_degree
+        elif obj_center_z > 1.2:
+            # Objects above 1.2m are likely wall/ceiling-mounted
+            # Use near-horizontal view (85°) to avoid looking up from below
+            angle = 85
         else:
-            b_camera.rotation_euler[0] = np.deg2rad(self.blender_cfg.camera_bird_view_degree)
+            # Floor-level objects use standard bird's eye view
+            angle = self.blender_cfg.camera_bird_view_degree
+        b_camera.rotation_euler[0] = np.deg2rad(angle)
 
         # Rotate camera based on object front vector convention.
         # If front is +Y (e.g., SceneAgent), rotate camera 180° to look at the actual front.
         if self.scene_state is not None and self.scene_state.objectFrontVector is not None:
             if self.scene_state.objectFrontVector[1] > 0:  # Front is +Y
                 b_camera.rotation_euler[2] += np.pi
-        
-        # # Need this because models imported from .glb files can have multiple meshes within one root b_obj
-        obj_bounds = np.asarray(self.get_obj_bounds(b_obj.name))
-        obj_dimensions = obj_bounds[1] - obj_bounds[0]
         
         # Hide all objects except the target object and the architectural elements
         if hide_others:
@@ -1565,12 +1574,14 @@ class BlenderScene:
             obj_centroid = np.mean(np.asarray(self.get_obj_bounds(b_obj.name)), axis=0)
             for close_to_obj in close_to_objs:
                 
-                # Do not include objects that to the side of the target object
+                # Do not include objects that are to the side of the target object.
+                # Keep objects above OR below (for showing supporting surfaces).
                 close_to_obj_centroid = np.mean(np.asarray(self.get_obj_bounds(close_to_obj.name)), axis=0)
                 from_obj_to_close_to_obj = close_to_obj_centroid - obj_centroid
                 from_obj_to_close_to_obj /= np.linalg.norm(from_obj_to_close_to_obj)
                 UP_VECTOR = np.array([0, 0, 1])
-                if np.dot(from_obj_to_close_to_obj, UP_VECTOR) < 0.25:
+                vertical_component = abs(np.dot(from_obj_to_close_to_obj, UP_VECTOR))
+                if vertical_component < 0.25:  # Object is mostly to the side
                     close_to_objs.remove(close_to_obj)
                     continue
                 
