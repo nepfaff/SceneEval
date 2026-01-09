@@ -29,6 +29,7 @@ class AssetInfo:
         description: a description of the asset
         extra_rotation_transform: an optional rotation transform matrix applied to the asset
         sdf_path: optional path to SDF file (for SceneAgent collision detection)
+        sdf_scale: uniform scale factor from SDF file (default 1.0)
     """
 
     asset_id: str
@@ -36,6 +37,7 @@ class AssetInfo:
     description: str
     extra_rotation_transform: np.ndarray | None = None
     sdf_path: Path | None = None
+    sdf_scale: float = 1.0
 
 class BaseAssetDataset(ABC):
     """

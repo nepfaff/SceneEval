@@ -91,8 +91,9 @@ class SceneAgentAssetDataset(BaseAssetDataset):
                         f"Make sure the scene-agent output has been converted."
                     )
 
-                # Extract GLTF path from SDF
+                # Extract GLTF path and scale from SDF
                 gltf_path = self._extract_gltf_from_sdf(sdf_path)
+                sdf_scale = self._extract_scale_from_sdf(sdf_path)
 
                 return AssetInfo(
                     asset_id=asset_id,
@@ -100,6 +101,7 @@ class SceneAgentAssetDataset(BaseAssetDataset):
                     description=f"{obj_id} (scene-agent)",
                     extra_rotation_transform=None,
                     sdf_path=sdf_path,
+                    sdf_scale=sdf_scale,
                 )
 
         raise FileNotFoundError(f"Object {obj_id} not found in scene_{scene_id}.json")
@@ -166,3 +168,37 @@ class SceneAgentAssetDataset(BaseAssetDataset):
                         return gltf_path
 
         raise ValueError(f"Could not find visual mesh URI in SDF: {sdf_path}")
+
+    def _extract_scale_from_sdf(self, sdf_path: Path) -> float:
+        """
+        Extract uniform scale factor from SDF file.
+
+        SDF files may contain <scale> elements in mesh definitions:
+            <mesh>
+                <uri>model.gltf</uri>
+                <scale>0.70 0.70 0.70</scale>
+            </mesh>
+
+        Args:
+            sdf_path: Path to SDF file
+
+        Returns:
+            Uniform scale factor (1.0 if no scale found or non-uniform)
+        """
+        tree = ET.parse(sdf_path)
+        root = tree.getroot()
+
+        # Find first scale element in visual mesh
+        for visual in root.iter("visual"):
+            geometry = visual.find("geometry")
+            if geometry is not None:
+                mesh = geometry.find("mesh")
+                if mesh is not None:
+                    scale_elem = mesh.find("scale")
+                    if scale_elem is not None and scale_elem.text:
+                        values = [float(v) for v in scale_elem.text.strip().split()]
+                        if len(values) >= 3:
+                            # Check for uniform scale (all values approximately equal)
+                            if abs(values[0] - values[1]) < 0.001 and abs(values[1] - values[2]) < 0.001:
+                                return values[0]
+        return 1.0

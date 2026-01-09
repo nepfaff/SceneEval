@@ -518,6 +518,11 @@ class BlenderScene:
         # Use expected_name as key (not b_new_obj.name) to match trimesh_scene naming
         self.b_objs[expected_name] = b_new_obj
 
+        # Apply SDF scale if present (for scene-agent objects with scale in SDF)
+        # This must be done before transform_apply so scale gets baked into vertices
+        if asset_info.sdf_scale != 1.0:
+            b_new_obj.scale = (asset_info.sdf_scale, asset_info.sdf_scale, asset_info.sdf_scale)
+
         # Apply object scale to mesh vertices (normalize the object representation)
         # This ensures matrix_world only contains rotation and translation, not scale
         # Fixes mismatch between Blender (preserves GLB node scale) and Trimesh (flattens to vertices)

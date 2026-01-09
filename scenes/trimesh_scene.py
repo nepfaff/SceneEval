@@ -111,6 +111,10 @@ class TrimeshScene:
         # Load the object file as a Trimesh mesh
         mesh = trimesh.load(file_path, force="mesh")
 
+        # Apply SDF scale if present (for scene-agent objects with scale in SDF)
+        if hasattr(asset_info, 'sdf_scale') and asset_info.sdf_scale != 1.0:
+            mesh.apply_scale(asset_info.sdf_scale)
+
         # Merge duplicate vertices by distance (cleanup before potential decimation)
         # This preserves mesh quality better than decimation alone
         # Use digits_vertex=4 for ~0.0001m precision (matching Blender's 0.001m threshold)

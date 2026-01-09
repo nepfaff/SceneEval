@@ -53,7 +53,7 @@ obj_matching: >
   ```
   If the object does not belong to any specified category, respond with "matched: False" and "matched_category: "".
   Here is the list of object categories to match against:
-  "<TARGET_CATEGORIES>"
+  <TARGET_CATEGORIES>
 obj_attribute: >
   The user specified the scene to contain objects with certain attributes.
   You are provided with images of instances of objects in the scene with the same category.
