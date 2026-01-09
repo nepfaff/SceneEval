@@ -1491,10 +1491,13 @@ def create_drake_plant_from_scene_agent(
     try:
         # Process each object.
         for obj in objects:
-            obj_id = obj["id"]
+            raw_id = obj["id"]
+            # Use index + id to ensure uniqueness for duplicate object IDs
+            # (e.g., multiple instances of "paperback_book_1" in a scene)
+            obj_id = f"{obj['index']}_{raw_id}"
 
             # Skip carpet objects - they don't simulate well (thin geometry).
-            if obj_id in carpet_ids_raw:
+            if raw_id in carpet_ids_raw:
                 console_logger.info(f"Skipping carpet object: {obj_id}")
                 continue
 
@@ -1735,7 +1738,9 @@ def _build_drake_directives_scene_agent(
         )
 
         # Weld if requested - include X_PC transform so object is welded at its pose.
-        if obj_id in weld_to_world:
+        # obj_id may be indexed (e.g., "33_paperback_book_1"), extract raw ID for matching
+        raw_id = obj_id.split("_", 1)[1] if "_" in obj_id else obj_id
+        if raw_id in weld_to_world:
             lines.extend(
                 [
                     "- add_weld:",
