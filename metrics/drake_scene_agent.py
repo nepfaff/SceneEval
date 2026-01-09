@@ -26,7 +26,9 @@ from .drake_utils import (
 )
 
 
-def _get_scene_agent_paths(output_dir: pathlib.Path) -> tuple[pathlib.Path, pathlib.Path]:
+def _get_scene_agent_paths(
+    output_dir: pathlib.Path, input_root: str | None = None
+) -> tuple[pathlib.Path, pathlib.Path]:
     """Get scene JSON path and assets dir for SceneAgent from output directory.
 
     SceneAgent output follows this structure:
@@ -36,6 +38,8 @@ def _get_scene_agent_paths(output_dir: pathlib.Path) -> tuple[pathlib.Path, path
 
     Args:
         output_dir: Output directory for the scene (e.g., output_eval/SceneAgent/scene_0)
+        input_root: Optional custom input root path (e.g., /path/to/SceneAgent_NoCritic).
+                    If provided, overrides the default input/{method_name} path.
 
     Returns:
         Tuple of (scene_json_path, assets_dir)
@@ -44,7 +48,10 @@ def _get_scene_agent_paths(output_dir: pathlib.Path) -> tuple[pathlib.Path, path
     method_name = output_dir.parent.name  # e.g., "SceneAgent"
 
     # Construct input paths
-    input_base = pathlib.Path("input") / method_name
+    if input_root:
+        input_base = pathlib.Path(input_root)
+    else:
+        input_base = pathlib.Path("input") / method_name
     scene_json_path = input_base / f"{scene_name}.json"
     assets_dir = input_base / scene_name / "assets"
 
@@ -57,9 +64,11 @@ class DrakeCollisionMetricSceneAgentConfig:
 
     Attributes:
         penetration_threshold: Minimum penetration depth to report (meters).
+        input_root: Optional custom input root path for scene files.
     """
 
     penetration_threshold: float = 0.001
+    input_root: str | None = None
 
 
 @register_non_vlm_metric(config_class=DrakeCollisionMetricSceneAgentConfig)
@@ -80,7 +89,7 @@ class DrakeCollisionMetricSceneAgent(BaseMetric):
 
     def run(self, verbose: bool = False) -> MetricResult:
         # Get SceneAgent-specific paths
-        scene_json_path, assets_dir = _get_scene_agent_paths(self.output_dir)
+        scene_json_path, assets_dir = _get_scene_agent_paths(self.output_dir, self.cfg.input_root)
 
         # Validate paths exist
         if not scene_json_path.exists():
@@ -258,6 +267,7 @@ class StaticEquilibriumMetricSceneAgentConfig:
     rotation_threshold: float = 0.1
     weld_wall_ceiling_objects: bool = True
     save_simulation_html: bool = True
+    input_root: str | None = None
 
 
 @register_non_vlm_metric(config_class=StaticEquilibriumMetricSceneAgentConfig)
@@ -291,7 +301,7 @@ class StaticEquilibriumMetricSceneAgent(BaseMetric):
 
     def run(self, verbose: bool = False) -> MetricResult:
         # Get SceneAgent-specific paths
-        scene_json_path, assets_dir = _get_scene_agent_paths(self.output_dir)
+        scene_json_path, assets_dir = _get_scene_agent_paths(self.output_dir, self.cfg.input_root)
 
         # Validate paths exist
         if not scene_json_path.exists():
@@ -471,6 +481,7 @@ class WeldedEquilibriumMetricSceneAgentConfig:
     penetration_threshold: float = 0.001
     weld_wall_ceiling_objects: bool = True
     save_simulation_html: bool = True
+    input_root: str | None = None
 
 
 @register_non_vlm_metric(config_class=WeldedEquilibriumMetricSceneAgentConfig)
@@ -505,7 +516,7 @@ class WeldedEquilibriumMetricSceneAgent(BaseMetric):
 
     def run(self, verbose: bool = False) -> MetricResult:
         # Get SceneAgent-specific paths
-        scene_json_path, assets_dir = _get_scene_agent_paths(self.output_dir)
+        scene_json_path, assets_dir = _get_scene_agent_paths(self.output_dir, self.cfg.input_root)
 
         # Validate paths exist
         if not scene_json_path.exists():
@@ -728,6 +739,7 @@ class ArchitecturalWeldedEquilibriumMetricSceneAgentConfig:
     rotation_threshold: float = 0.1
     save_simulation_html: bool = True
     weld_floor_objects: bool = False
+    input_root: str | None = None
 
 
 @register_non_vlm_metric(config_class=ArchitecturalWeldedEquilibriumMetricSceneAgentConfig)
@@ -774,7 +786,7 @@ class ArchitecturalWeldedEquilibriumMetricSceneAgent(BaseMetric):
 
     def run(self, verbose: bool = False) -> MetricResult:
         # Get SceneAgent-specific paths
-        scene_json_path, assets_dir = _get_scene_agent_paths(self.output_dir)
+        scene_json_path, assets_dir = _get_scene_agent_paths(self.output_dir, self.cfg.input_root)
 
         # Validate paths exist
         if not scene_json_path.exists():
@@ -968,6 +980,7 @@ class CombinedWeldedEquilibriumMetricSceneAgentConfig:
     penetration_threshold: float = 0.001
     save_simulation_html: bool = True
     weld_floor_objects: bool = False
+    input_root: str | None = None
 
 
 @register_non_vlm_metric(config_class=CombinedWeldedEquilibriumMetricSceneAgentConfig)
@@ -1014,7 +1027,7 @@ class CombinedWeldedEquilibriumMetricSceneAgent(BaseMetric):
 
     def run(self, verbose: bool = False) -> MetricResult:
         # Get SceneAgent-specific paths
-        scene_json_path, assets_dir = _get_scene_agent_paths(self.output_dir)
+        scene_json_path, assets_dir = _get_scene_agent_paths(self.output_dir, self.cfg.input_root)
 
         # Validate paths exist
         if not scene_json_path.exists():
