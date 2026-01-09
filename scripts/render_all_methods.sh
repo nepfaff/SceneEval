@@ -1,15 +1,21 @@
 #!/bin/bash
 # Render all methods in parallel (one process per method)
 #
-# Usage: ./scripts/render_all_methods.sh [resolution]
+# Usage: ./scripts/render_all_methods.sh [resolution] [input_dir] [output_dir]
 #
 # Arguments:
-#   resolution  Image width and height in pixels (default: 1024)
+#   resolution  Image width and height in pixels (default: 1536)
+#   input_dir   Full path to input directory containing scene_*.json (optional)
+#   output_dir  Full path to output directory (optional)
+#
+# When input_dir/output_dir are not provided, uses METHODS array config.
+# When provided, renders the single method specified in METHODS array
+# from/to the given paths directly.
 #
 # Examples:
-#   ./scripts/render_all_methods.sh           # Default 1024x1024
-#   ./scripts/render_all_methods.sh 512       # 512x512 for faster testing
-#   ./scripts/render_all_methods.sh 2048      # High resolution
+#   ./scripts/render_all_methods.sh                    # Use METHODS array config
+#   ./scripts/render_all_methods.sh 512                # 512x512, METHODS array config
+#   ./scripts/render_all_methods.sh 1536 /path/to/input /path/to/output
 #
 # GPU Distribution:
 #   If multiple GPUs are detected, methods are assigned GPUs in round-robin
@@ -24,6 +30,16 @@ set -e
 
 # Parse arguments
 RESOLUTION=${1:-1536}
+INPUT_DIR_OVERRIDE=${2:-}
+OUTPUT_DIR_OVERRIDE=${3:-}
+
+# Expand paths (handle ~)
+if [ -n "$INPUT_DIR_OVERRIDE" ]; then
+    INPUT_DIR_OVERRIDE=$(eval echo "$INPUT_DIR_OVERRIDE")
+fi
+if [ -n "$OUTPUT_DIR_OVERRIDE" ]; then
+    OUTPUT_DIR_OVERRIDE=$(eval echo "$OUTPUT_DIR_OVERRIDE")
+fi
 
 # ============================================
 # METHOD CONFIGURATION
@@ -32,15 +48,15 @@ RESOLUTION=${1:-1536}
 # Format: "METHOD_NAME:OUTPUT_DIR"
 
 METHODS=(
-    "SceneWeaver:output_eval/render_sceneweaver"
-    "SceneAgent:output_eval/render_sceneagent"
+    # "SceneWeaver:output_eval/render_sceneweaver"
+    # "SceneAgent:output_eval/render_sceneagent"
     "SceneAgent_NoCritic:output_eval/render_sceneagent_nocritic"
-    "Holodeck:output_eval/render_holodeck"
-    "HSM:output_eval/render_hsm"
-    "HSM_hf:output_eval/render_hsm_hf"
-    "LayoutVLM_Curated:output_eval/render_layoutvlm_curated"
-    "LayoutVLM_Objaverse:output_eval/render_layoutvlm_objaverse"
-    "IDesign:output_eval/render_idesign"
+    # "Holodeck:output_eval/render_holodeck"
+    # "HSM:output_eval/render_hsm"
+    # "HSM_hf:output_eval/render_hsm_hf"
+    # "LayoutVLM_Curated:output_eval/render_layoutvlm_curated"
+    # "LayoutVLM_Objaverse:output_eval/render_layoutvlm_objaverse"
+    # "IDesign:output_eval/render_idesign"
 )
 
 # Resolution is appended to output dirs: output_eval/render_sceneweaver_1024
@@ -133,6 +149,10 @@ echo "Multi-Method Parallel Rendering"
 echo "========================================"
 echo "Run ID: $RUN_ID"
 echo "Resolution: ${RESOLUTION}x${RESOLUTION}"
+if [ -n "$INPUT_DIR_OVERRIDE" ]; then
+    echo "Input: $INPUT_DIR_OVERRIDE (override)"
+    echo "Output: $OUTPUT_DIR_OVERRIDE (override)"
+fi
 if [ "$GPU_COUNT" -gt 0 ]; then
     echo "GPUs: $GPU_COUNT available (IDs: ${GPU_IDS[*]})"
 else
@@ -146,21 +166,29 @@ VALID_METHODS=()
 PREVIEW_GPU_INDEX=0
 for entry in "${METHODS[@]}"; do
     METHOD="${entry%%:*}"
-    OUTPUT_DIR="${entry##*:}"
-    INPUT_DIR="input/$METHOD"
+    DEFAULT_OUTPUT="${entry##*:}"
+
+    # Use overrides if provided, otherwise use defaults
+    if [ -n "$INPUT_DIR_OVERRIDE" ]; then
+        INPUT_DIR="$INPUT_DIR_OVERRIDE"
+        OUTPUT_DIR="$OUTPUT_DIR_OVERRIDE"
+    else
+        INPUT_DIR="input/$METHOD"
+        OUTPUT_DIR="${DEFAULT_OUTPUT}_${RESOLUTION}"
+    fi
 
     if [ -d "$INPUT_DIR" ]; then
         SCENE_COUNT=$(ls "$INPUT_DIR"/scene_*.json 2>/dev/null | wc -l)
         if [ "$GPU_COUNT" -gt 0 ]; then
             PREVIEW_GPU="${GPU_IDS[$PREVIEW_GPU_INDEX]}"
-            echo "  - $METHOD: $SCENE_COUNT scenes -> ${OUTPUT_DIR}_${RESOLUTION} [GPU $PREVIEW_GPU]"
+            echo "  - $METHOD: $SCENE_COUNT scenes -> $OUTPUT_DIR [GPU $PREVIEW_GPU]"
             PREVIEW_GPU_INDEX=$(( (PREVIEW_GPU_INDEX + 1) % GPU_COUNT ))
         else
-            echo "  - $METHOD: $SCENE_COUNT scenes -> ${OUTPUT_DIR}_${RESOLUTION}"
+            echo "  - $METHOD: $SCENE_COUNT scenes -> $OUTPUT_DIR"
         fi
         VALID_METHODS+=("$entry")
     else
-        echo "  - $METHOD: SKIPPED (no input directory)"
+        echo "  - $METHOD: SKIPPED (no input directory: $INPUT_DIR)"
     fi
 done
 
@@ -192,26 +220,53 @@ echo ""
 GPU_INDEX=0
 for entry in "${VALID_METHODS[@]}"; do
     METHOD="${entry%%:*}"
-    OUTPUT_DIR="${entry##*:}"
+    DEFAULT_OUTPUT="${entry##*:}"
 
-    FULL_OUTPUT_DIR="${OUTPUT_DIR}_${RESOLUTION}"
+    # Determine input/output paths
+    if [ -n "$INPUT_DIR_OVERRIDE" ]; then
+        INPUT_DIR="$INPUT_DIR_OVERRIDE"
+        OUTPUT_DIR="$OUTPUT_DIR_OVERRIDE"
+        # Extract parent dir for root_dir (input_dir without the method folder name)
+        INPUT_ROOT=$(dirname "$INPUT_DIR")
+    else
+        INPUT_DIR="input/$METHOD"
+        OUTPUT_DIR="${DEFAULT_OUTPUT}_${RESOLUTION}"
+        INPUT_ROOT="input"
+    fi
 
     # Assign GPU in round-robin fashion if GPUs are available
     if [ "$GPU_COUNT" -gt 0 ]; then
         ASSIGNED_GPU="${GPU_IDS[$GPU_INDEX]}"
         GPU_ENV="CUDA_VISIBLE_DEVICES=$ASSIGNED_GPU"
-        echo "Starting: $METHOD -> $FULL_OUTPUT_DIR (GPU $ASSIGNED_GPU)"
+        echo "Starting: $METHOD -> $OUTPUT_DIR (GPU $ASSIGNED_GPU)"
         GPU_INDEX=$(( (GPU_INDEX + 1) % GPU_COUNT ))
     else
         GPU_ENV=""
-        echo "Starting: $METHOD -> $FULL_OUTPUT_DIR (CPU)"
+        echo "Starting: $METHOD -> $OUTPUT_DIR (CPU)"
     fi
+
+    # Build asset path override for methods that store assets with input
+    # These methods have per-scene assets in their input directory
+    ASSET_OVERRIDE=""
+    case "$METHOD" in
+        SceneAgent|SceneAgent_NoCritic)
+            ASSET_OVERRIDE="assets.scene_agent.dataset_root_path=${INPUT_DIR}"
+            ;;
+        SceneWeaver)
+            ASSET_OVERRIDE="assets.sceneweaver.dataset_root_path=${INPUT_DIR} assets.sw.dataset_root_path=${INPUT_DIR}"
+            ;;
+        IDesign)
+            ASSET_OVERRIDE="assets.idesign.dataset_root_path=${INPUT_DIR}"
+            ;;
+    esac
 
     env $GPU_ENV .venv/bin/python main.py \
         evaluation_plan=room_views_plan \
         "evaluation_plan.input_cfg.scene_methods=[$METHOD]" \
         'evaluation_plan.input_cfg.scene_mode=all' \
-        "evaluation_plan.evaluation_cfg.output_dir=$FULL_OUTPUT_DIR" \
+        "evaluation_plan.evaluation_cfg.output_dir=$OUTPUT_DIR" \
+        "evaluation_plan.input_cfg.root_dir=$INPUT_ROOT" \
+        $ASSET_OVERRIDE \
         "blender.resolution_x=$RESOLUTION" \
         "blender.resolution_y=$RESOLUTION" \
         > "${LOG_DIR}/${METHOD}.log" 2>&1 &
