@@ -758,10 +758,15 @@ def _get_original_blend_path(method: str, method_scene_file: pathlib.Path) -> pa
         "HSM": "original_hsm.blend",
     }
 
-    if method not in blend_filenames:
+    # Handle SceneAgent variants (SceneAgent, SceneAgent_NoCritic, etc.)
+    if "SceneAgent" in method:
+        blend_filename = "original_scene_agent.blend"
+    elif method not in blend_filenames:
         return None
+    else:
+        blend_filename = blend_filenames[method]
 
-    blend_path = scene_dir / blend_filenames[method]
+    blend_path = scene_dir / blend_filename
     return blend_path if blend_path.exists() else None
 
 
@@ -1139,8 +1144,8 @@ def main(cfg: DictConfig) -> None:
                     # call invalidates all Blender object references in the Scene object
                     scene = Scene(mesh_retriever, scene_state, scene_cfg, blender_cfg, trimesh_cfg, output_dir)
 
-                # For SceneAgent: Copy and render original blend file for comparison
-                if method == "SceneAgent":
+                # For SceneAgent variants: Copy and render original blend file for comparison
+                if "SceneAgent" in method:
                     _copy_and_render_original_scene_agent_blend(scene, method_scene_file, output_dir, resolution=blender_cfg.resolution_x)
                     # Recreate scene after rendering original blend
                     scene = Scene(mesh_retriever, scene_state, scene_cfg, blender_cfg, trimesh_cfg, output_dir)
