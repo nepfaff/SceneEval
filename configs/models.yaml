@@ -77,6 +77,13 @@ models:
       - scene_agent
     hdri_strength: 0.4  # Tested scenes 0,1
 
+  SceneAgent_NoCritic:
+    input_dir_name: SceneAgent_NoCritic
+    output_dir_name: ${models.SceneAgent_NoCritic.input_dir_name}
+    asset_datasets:
+      - scene_agent
+    hdri_strength: 0.4
+
   IDesign:
     input_dir_name: IDesign
     output_dir_name: ${models.IDesign.input_dir_name}
