@@ -42,7 +42,14 @@ import shutil
 import argparse
 from pathlib import Path
 
+import numpy as np
 import trimesh
+
+# Support both running as a module and as a script
+try:
+    from .sdf_mesh_utils import combine_sdf_meshes_at_joint_angles
+except ImportError:
+    from sdf_mesh_utils import combine_sdf_meshes_at_joint_angles
 
 
 def find_scene_state_path(scene_dir: Path) -> Path | None:
@@ -161,17 +168,57 @@ def get_sdf_scale_factor(sdf_dir: Path) -> float:
 
 def merge_articulated_meshes(sdf_dir: Path) -> Path | None:
     """
-    Merge combined_scene.gltf into a single mesh file for articulated objects.
+    Create combined_merged.glb for articulated objects using Drake FK.
 
-    Articulated objects from scene-agent have separate meshes for each link
-    (doors, drawers, body). This merges them into a single mesh that Blender
-    can import correctly as one object.
+    Uses Drake forward kinematics to properly position link meshes
+    at zero joint angles, then exports as GLB. This ensures correct
+    orientation regardless of the source PartNet-Mobility model.
 
-    Also applies:
-    - 180° rotation around Y axis to match Drake's orientation (combined_scene.gltf
-      is exported with a different orientation than what Drake produces)
-    - Scale factor from the SDF file (PartNet-Mobility objects often have scale
-      factors baked into the SDF but not the GLTF meshes)
+    Args:
+        sdf_dir: Directory containing the SDF file
+
+    Returns:
+        Path to merged file (combined_merged.glb), or None if merging failed
+    """
+    merged_output_path = sdf_dir / "combined_merged.glb"
+
+    # Skip if already merged
+    if merged_output_path.exists():
+        return merged_output_path
+
+    # Find SDF file
+    sdf_files = list(sdf_dir.glob("*.sdf"))
+    if not sdf_files:
+        print(f"    Warning: No SDF file found in {sdf_dir.name}")
+        return None
+
+    sdf_path = sdf_files[0]
+
+    try:
+        # Use Drake FK to combine meshes at zero joint angles
+        combined_mesh = combine_sdf_meshes_at_joint_angles(sdf_path, use_max_angles=False)
+
+        # NOTE: Do NOT apply scale here! The SDF scale will be applied at load time
+        # by trimesh_scene.py (line ~116) via asset_info.sdf_scale. Applying it here
+        # would result in double-scaling.
+
+        # Export combined mesh (unscaled - scale applied at runtime)
+        combined_mesh.export(str(merged_output_path))
+        print(f"    Created combined_merged.glb via Drake FK for {sdf_dir.name}")
+        return merged_output_path
+
+    except Exception as e:
+        print(f"    Warning: Drake FK combination failed for {sdf_dir.name}: {e}")
+        # Fallback to existing method (may have orientation issues for some models)
+        return _merge_articulated_meshes_fallback(sdf_dir)
+
+
+def _merge_articulated_meshes_fallback(sdf_dir: Path) -> Path | None:
+    """
+    Fallback: Merge combined_scene.gltf with 180° Y rotation.
+
+    This is the original implementation kept as a fallback if Drake FK fails.
+    Note: This may have orientation issues for certain PartNet-Mobility models.
 
     Args:
         sdf_dir: Directory containing combined_scene.gltf
@@ -179,18 +226,15 @@ def merge_articulated_meshes(sdf_dir: Path) -> Path | None:
     Returns:
         Path to merged file (combined_merged.glb), or None if merging failed
     """
-    import numpy as np
-
     combined_scene_path = sdf_dir / "combined_scene.gltf"
     merged_output_path = sdf_dir / "combined_merged.glb"
 
-    # Skip if already merged
-    if merged_output_path.exists():
-        return merged_output_path
+    if not combined_scene_path.exists():
+        return None
 
     try:
-        # Get scale factor from SDF
-        scale_factor = get_sdf_scale_factor(sdf_dir)
+        # NOTE: Do NOT apply scale here! The SDF scale will be applied at load time
+        # by trimesh_scene.py via asset_info.sdf_scale.
 
         # Load the GLTF scene
         scene = trimesh.load(str(combined_scene_path))
@@ -222,28 +266,24 @@ def merge_articulated_meshes(sdf_dir: Path) -> Path | None:
             )
             merged.apply_transform(rotation_180_y)
 
-            # Apply SDF scale factor if not 1.0
-            if scale_factor != 1.0:
-                merged.apply_scale(scale_factor)
-
+            # NOTE: Scale will be applied at load time by trimesh_scene.py
             merged.export(str(merged_output_path))
+            print(f"    Created combined_merged.glb via fallback for {sdf_dir.name}")
             return merged_output_path
 
         elif isinstance(scene, trimesh.Trimesh):
-            # Already a single mesh - apply rotation and scale
+            # Already a single mesh - apply rotation only (scale at load time)
             rotation_180_y = trimesh.transformations.rotation_matrix(
                 np.pi, [0, 1, 0]
             )
             scene.apply_transform(rotation_180_y)
-            if scale_factor != 1.0:
-                scene.apply_scale(scale_factor)
             scene.export(str(merged_output_path))
             return merged_output_path
 
         return None
 
     except Exception as e:
-        print(f"    Warning: Failed to merge meshes in {sdf_dir.name}: {e}")
+        print(f"    Warning: Fallback merge also failed for {sdf_dir.name}: {e}")
         return None
 
 
