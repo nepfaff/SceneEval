@@ -256,6 +256,7 @@ class WeldedEquilibriumMetricBase(BaseMetric):
                 simulation_time=self.cfg.simulation_time,
                 scene_graph=scene_graph2,
                 output_html_path=html_path,
+                lock_articulated_joints=True,
             )
 
             return diagram2, plant2, initial_context, final_context, obj_id_to_model_name2

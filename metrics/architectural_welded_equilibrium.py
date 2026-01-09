@@ -209,6 +209,7 @@ class ArchitecturalWeldedEquilibriumMetricBase(BaseMetric):
             simulation_time=self.cfg.simulation_time,
             scene_graph=scene_graph,
             output_html_path=html_path,
+            lock_articulated_joints=True,
         )
 
         # Get plant contexts.

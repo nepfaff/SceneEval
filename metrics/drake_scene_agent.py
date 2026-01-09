@@ -337,6 +337,7 @@ class StaticEquilibriumMetricSceneAgent(BaseMetric):
             simulation_time=self.cfg.simulation_time,
             scene_graph=scene_graph,
             output_html_path=html_path,
+            lock_articulated_joints=True,
         )
 
         # Get plant contexts
@@ -582,6 +583,7 @@ class WeldedEquilibriumMetricSceneAgent(BaseMetric):
             simulation_time=self.cfg.simulation_time,
             scene_graph=scene_graph2,
             output_html_path=html_path,
+            lock_articulated_joints=True,
         )
 
         # Get plant contexts
@@ -816,6 +818,7 @@ class ArchitecturalWeldedEquilibriumMetricSceneAgent(BaseMetric):
             simulation_time=self.cfg.simulation_time,
             scene_graph=scene_graph,
             output_html_path=html_path,
+            lock_articulated_joints=True,
         )
 
         # Get plant contexts
@@ -1116,6 +1119,7 @@ class CombinedWeldedEquilibriumMetricSceneAgent(BaseMetric):
             simulation_time=self.cfg.simulation_time,
             scene_graph=scene_graph2,
             output_html_path=html_path,
+            lock_articulated_joints=True,
         )
 
         # Get plant contexts

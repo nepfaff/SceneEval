@@ -1289,6 +1289,7 @@ def run_simulation(
     scene_graph: SceneGraph | None = None,
     output_html_path: Path | None = None,
     show_collision_geometry: bool = True,
+    lock_articulated_joints: bool = False,
 ) -> tuple:
     """Run Drake simulation and return initial and final contexts.
 
@@ -1300,6 +1301,10 @@ def run_simulation(
         output_html_path: If provided, save meshcat visualization to this HTML file.
         show_collision_geometry: If True and output_html_path is set, also show
             collision geometry in semi-transparent red for debugging.
+        lock_articulated_joints: If True, lock all revolute/prismatic joints
+            (doors, drawers) while leaving floating base joints free to move.
+            This prevents articulated objects from having false displacement
+            due to doors/drawers opening during simulation.
 
     Returns:
         Tuple of (diagram, initial_context, final_context).
@@ -1341,6 +1346,32 @@ def run_simulation(
 
     # Initialize simulator.
     simulator.Initialize()
+
+    # Lock articulated joints (doors/drawers) if requested.
+    # This prevents false displacement measurements from doors opening during sim.
+    if lock_articulated_joints:
+        plant_context = plant.GetMyMutableContextFromRoot(
+            simulator.get_mutable_context()
+        )
+        locked_count = 0
+        for joint_idx in plant.GetJointIndices():
+            joint = plant.get_mutable_joint(joint_idx)
+            joint_type = joint.type_name()
+
+            # Skip floating base joints (free bodies need to move for equilibrium)
+            if joint_type in ("quaternion_floating", "rpy_floating"):
+                continue
+
+            # Skip weld joints (already fixed, 0 DOF)
+            if joint_type == "weld":
+                continue
+
+            # Lock articulated joints (revolute, prismatic, etc.)
+            joint.Lock(plant_context)
+            locked_count += 1
+
+        if locked_count > 0:
+            console_logger.info(f"Locked {locked_count} articulated joints")
 
     # Copy initial state for later comparison.
     initial_state = initial_context.Clone()

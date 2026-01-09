@@ -226,6 +226,7 @@ class StaticEquilibriumMetricBase(BaseMetric):
                 simulation_time=self.cfg.simulation_time,
                 scene_graph=scene_graph,
                 output_html_path=html_path,
+                lock_articulated_joints=True,
             )
 
             return diagram, plant, initial_context, final_context, obj_id_to_model_name
