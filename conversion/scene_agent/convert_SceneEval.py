@@ -415,7 +415,7 @@ def convert_single_scene(scene_dir: Path, target_dir: Path, scene_id: int) -> No
     print(f"  Done: scene_{scene_id}")
 
 
-def convert_scene_agent_run(source_run_dir: Path, target_dir: Path, mapping: dict = None) -> None:
+def convert_scene_agent_run(source_run_dir: Path, target_dir: Path, mapping: dict = None, scene_filter: set = None) -> None:
     """
     Convert all scenes from a scene-agent run to SceneEval format.
 
@@ -423,6 +423,7 @@ def convert_scene_agent_run(source_run_dir: Path, target_dir: Path, mapping: dic
         source_run_dir: Path to scene-agent run directory
         target_dir: Path to SceneEval input directory
         mapping: Optional dict mapping source index to target scene ID
+        scene_filter: Optional set of scene IDs to convert (if None, converts all)
     """
     source_run_dir = Path(source_run_dir).expanduser().resolve()
     target_dir = Path(target_dir).expanduser().resolve()
@@ -441,11 +442,27 @@ def convert_scene_agent_run(source_run_dir: Path, target_dir: Path, mapping: dic
     if not scene_dirs:
         raise ValueError(f"No scene directories found in {source_run_dir}")
 
+    # Filter scenes if scene_filter is provided
+    if scene_filter is not None:
+        filtered_dirs = []
+        for scene_dir in scene_dirs:
+            dir_name = scene_dir.name
+            if dir_name.startswith("scene_"):
+                try:
+                    src_scene_id = int(dir_name[6:])
+                    if src_scene_id in scene_filter:
+                        filtered_dirs.append(scene_dir)
+                except ValueError:
+                    pass
+        scene_dirs = filtered_dirs
+
     print(f"Found {len(scene_dirs)} scenes to convert")
     print(f"Source: {source_run_dir}")
     print(f"Target: {target_dir}")
     if mapping:
         print(f"Mapping: {mapping}")
+    if scene_filter:
+        print(f"Scene filter: {sorted(scene_filter)}")
     print()
 
     for scene_dir in scene_dirs:
@@ -494,13 +511,23 @@ def main():
         default=None,
         help='JSON mapping from source index to target ID'
     )
+    parser.add_argument(
+        "--scenes",
+        type=str,
+        default=None,
+        help='Comma-separated list of scene IDs to convert (e.g., "0,1,2,3"). If not specified, converts all scenes.'
+    )
     args = parser.parse_args()
 
     mapping = None
     if args.mapping:
         mapping = json.loads(args.mapping)
 
-    convert_scene_agent_run(args.source_run_dir, args.target_dir, mapping)
+    scene_filter = None
+    if args.scenes:
+        scene_filter = set(int(s.strip()) for s in args.scenes.split(","))
+
+    convert_scene_agent_run(args.source_run_dir, args.target_dir, mapping, scene_filter)
 
 
 if __name__ == "__main__":
