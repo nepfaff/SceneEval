@@ -1,11 +1,14 @@
 #!/bin/bash
 # Run scene evaluation in parallel for ALL scenes found in the input directory
 #
-# Usage: ./scripts/run_parallel_all.sh <method> <num_workers> [extra_args...]
+# Usage: ./scripts/run_parallel_all.sh <method> <num_workers> [--skip-existing] [extra_args...]
 #
 # Examples:
 #   # Evaluate all LayoutVLM scenes with 4 workers
 #   ./scripts/run_parallel_all.sh LayoutVLM 4
+#
+#   # Skip scenes that already have complete evaluations
+#   ./scripts/run_parallel_all.sh LayoutVLM 4 --skip-existing
 #
 #   # Full example with metrics
 #   ./scripts/run_parallel_all.sh SceneWeaver 8 \
@@ -38,6 +41,54 @@ fi
 
 shift 2  # Remove first two args, rest are passed to main.py
 
+# Check for --skip-existing flag
+SKIP_EXISTING=false
+for arg in "$@"; do
+    if [ "$arg" = "--skip-existing" ]; then
+        SKIP_EXISTING=true
+    fi
+done
+# Remove --skip-existing from args passed to main.py
+EXTRA_ARGS=()
+for arg in "$@"; do
+    if [ "$arg" != "--skip-existing" ]; then
+        EXTRA_ARGS+=("$arg")
+    fi
+done
+set -- "${EXTRA_ARGS[@]}"
+
+# Helper function: Extract output_dir from extra args, default to ./output_eval
+get_output_dir() {
+    local default_dir="./output_eval"
+    for arg in "$@"; do
+        if [[ "$arg" =~ output_dir=([^[:space:]]+) ]]; then
+            echo "${BASH_REMATCH[1]}"
+            return
+        fi
+    done
+    echo "$default_dir"
+}
+
+# Get the directory where this script is located (for finding helper scripts)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Helper function: Check if a scene has a complete evaluation
+# Args: $1 = output_dir, $2 = method, $3 = scene_id
+is_eval_complete() {
+    local output_dir="$1"
+    local method="$2"
+    local scene_id="$3"
+    local eval_file="${output_dir}/${method}/scene_${scene_id}/eval_result.json"
+
+    if [ ! -f "$eval_file" ]; then
+        return 1  # No eval file
+    fi
+
+    # Use helper script to check if all metrics have results
+    # Note: Capture exit code to avoid triggering set -e
+    python3 "${SCRIPT_DIR}/check_eval_complete.py" "$eval_file" || return 1
+    return 0
+}
+
 # Create unique run ID and log directory
 RUN_ID="$(date +%Y%m%d_%H%M%S)_$$"
 LOG_DIR="logs/run_${RUN_ID}"
@@ -65,6 +116,40 @@ fi
 # Convert to array
 IFS=',' read -ra SCENE_ARRAY <<< "$SCENE_IDS"
 TOTAL_SCENES=${#SCENE_ARRAY[@]}
+
+# Filter out scenes with complete evaluations if --skip-existing is set
+if [ "$SKIP_EXISTING" = true ]; then
+    OUTPUT_DIR=$(get_output_dir "$@")
+    echo "Checking for existing evals in: $OUTPUT_DIR"
+    FILTERED_SCENES=()
+    SKIPPED_COUNT=0
+    CHECKED=0
+    for scene_id in "${SCENE_ARRAY[@]}"; do
+        ((CHECKED++)) || true  # Prevent set -e from triggering on 0
+        # Show progress every 20 scenes
+        if [ $((CHECKED % 20)) -eq 0 ]; then
+            echo "  Checked $CHECKED/$TOTAL_SCENES scenes..."
+        fi
+        if is_eval_complete "$OUTPUT_DIR" "$METHOD" "$scene_id"; then
+            ((SKIPPED_COUNT++)) || true  # Prevent set -e from triggering on 0
+        else
+            FILTERED_SCENES+=("$scene_id")
+        fi
+    done
+    SCENE_ARRAY=("${FILTERED_SCENES[@]}")
+    TOTAL_SCENES=${#SCENE_ARRAY[@]}
+    echo "Skipping $SKIPPED_COUNT scenes with complete evaluations"
+    echo "Remaining scenes to evaluate: $TOTAL_SCENES"
+
+    if [ $TOTAL_SCENES -eq 0 ]; then
+        echo "All scenes already have complete evaluations. Nothing to do."
+        trap - EXIT
+        exit 0
+    fi
+
+    # Update SCENE_IDS for display
+    SCENE_IDS=$(IFS=','; echo "${SCENE_ARRAY[*]}")
+fi
 
 # Calculate scenes per worker
 SCENES_PER_WORKER=$(( (TOTAL_SCENES + NUM_WORKERS - 1) / NUM_WORKERS ))  # Ceiling division
