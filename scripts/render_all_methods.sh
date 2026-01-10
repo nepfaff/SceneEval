@@ -50,7 +50,8 @@ fi
 METHODS=(
     # "SceneWeaver:output_eval/render_sceneweaver"
     # "SceneAgent:output_eval/render_sceneagent"
-    "SceneAgent_NoCritic:output_eval/render_sceneagent_nocritic"
+    # "SceneAgent_NoCritic:output_eval/render_sceneagent_nocritic"
+    "SceneAgent_MaxOneCritic:output_eval/render_sceneagent_maxonecritic"
     # "Holodeck:output_eval/render_holodeck"
     # "HSM:output_eval/render_hsm"
     # "HSM_hf:output_eval/render_hsm_hf"
@@ -249,7 +250,7 @@ for entry in "${VALID_METHODS[@]}"; do
     # These methods have per-scene assets in their input directory
     ASSET_OVERRIDE=""
     case "$METHOD" in
-        SceneAgent|SceneAgent_NoCritic)
+        SceneAgent*)
             ASSET_OVERRIDE="assets.scene_agent.dataset_root_path=${INPUT_DIR}"
             ;;
         SceneWeaver)
