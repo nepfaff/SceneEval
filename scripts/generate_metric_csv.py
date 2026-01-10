@@ -36,9 +36,9 @@ METRIC_COLUMNS = [
     ("OutOfBoundMetric", "frac_out_of_bound"),  # Computed: over total objects
     ("OpeningClearanceMetric", "doors_blocked"),  # Computed
     # Drake collision metrics (CoACD/VHACD for most, SceneAgent variant)
-    ("DrakeCollisionMetricCoACD", "num_obj_in_collision"),
-    ("DrakeCollisionMetricCoACD", "frac_obj_in_collision"),  # Computed
-    ("DrakeCollisionMetricCoACD", "max_penetration_depth"),
+    # ("DrakeCollisionMetricCoACD", "num_obj_in_collision"),
+    # ("DrakeCollisionMetricCoACD", "frac_obj_in_collision"),  # Computed
+    # ("DrakeCollisionMetricCoACD", "max_penetration_depth"),
     ("DrakeCollisionMetricVHACD", "num_obj_in_collision"),
     ("DrakeCollisionMetricVHACD", "frac_obj_in_collision"),  # Computed
     ("DrakeCollisionMetricVHACD", "max_penetration_depth"),
@@ -46,10 +46,10 @@ METRIC_COLUMNS = [
     ("DrakeCollisionMetricSceneAgent", "frac_obj_in_collision"),  # Computed
     ("DrakeCollisionMetricSceneAgent", "max_penetration_depth"),
     # Architectural equilibrium metrics
-    ("ArchitecturalWeldedEquilibriumMetricCoACD", "scene_stable"),
-    ("ArchitecturalWeldedEquilibriumMetricCoACD", "num_unstable_objects"),
-    ("ArchitecturalWeldedEquilibriumMetricCoACD", "frac_unstable_objects"),  # Computed: over simulated
-    ("ArchitecturalWeldedEquilibriumMetricCoACD", "max_displacement"),
+    # ("ArchitecturalWeldedEquilibriumMetricCoACD", "scene_stable"),
+    # ("ArchitecturalWeldedEquilibriumMetricCoACD", "num_unstable_objects"),
+    # ("ArchitecturalWeldedEquilibriumMetricCoACD", "frac_unstable_objects"),  # Computed: over simulated
+    # ("ArchitecturalWeldedEquilibriumMetricCoACD", "max_displacement"),
     ("ArchitecturalWeldedEquilibriumMetricVHACD", "scene_stable"),
     ("ArchitecturalWeldedEquilibriumMetricVHACD", "num_unstable_objects"),
     ("ArchitecturalWeldedEquilibriumMetricVHACD", "frac_unstable_objects"),  # Computed: over simulated
@@ -59,10 +59,10 @@ METRIC_COLUMNS = [
     ("ArchitecturalWeldedEquilibriumMetricSceneAgent", "frac_unstable_objects"),  # Computed: over simulated
     ("ArchitecturalWeldedEquilibriumMetricSceneAgent", "max_displacement"),
     # Combined equilibrium metrics
-    ("CombinedWeldedEquilibriumMetricCoACD", "scene_stable"),
-    ("CombinedWeldedEquilibriumMetricCoACD", "num_unstable_objects"),
-    ("CombinedWeldedEquilibriumMetricCoACD", "frac_unstable_objects"),  # Computed: over simulated
-    ("CombinedWeldedEquilibriumMetricCoACD", "max_displacement"),
+    # ("CombinedWeldedEquilibriumMetricCoACD", "scene_stable"),
+    # ("CombinedWeldedEquilibriumMetricCoACD", "num_unstable_objects"),
+    # ("CombinedWeldedEquilibriumMetricCoACD", "frac_unstable_objects"),  # Computed: over simulated
+    # ("CombinedWeldedEquilibriumMetricCoACD", "max_displacement"),
     ("CombinedWeldedEquilibriumMetricVHACD", "scene_stable"),
     ("CombinedWeldedEquilibriumMetricVHACD", "num_unstable_objects"),
     ("CombinedWeldedEquilibriumMetricVHACD", "frac_unstable_objects"),  # Computed: over simulated
