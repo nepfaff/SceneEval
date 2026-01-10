@@ -3,11 +3,10 @@ import trimesh
 import numpy as np
 from .bounding_box import BoundingBox
 from .config import ArchitecturalRelationConfig
+from .utils import downsample_for_query
 
 logger = logging.getLogger(__name__)
 
-# Max vertices for spatial queries (to prevent memory explosion)
-SPATIAL_QUERY_MAX_VERTICES = 5000
 
 def _log_memory(label: str) -> None:
     """Log current memory usage from /proc/self/status."""
@@ -22,39 +21,6 @@ def _log_memory(label: str) -> None:
                     return
     except Exception:
         pass
-
-def _voxel_downsample_for_query(mesh: trimesh.Trimesh) -> trimesh.Trimesh:
-    """Voxel downsample mesh if needed for spatial queries."""
-    if not hasattr(mesh, 'vertices') or len(mesh.vertices) <= SPATIAL_QUERY_MAX_VERTICES:
-        return mesh
-
-    original_vertices = len(mesh.vertices)
-
-    # Compute voxel pitch to achieve target vertex count
-    # Estimate: vertices ≈ (mesh_size / voxel_pitch)^3
-    mesh_extents = mesh.bounds[1] - mesh.bounds[0]
-    mesh_size = np.mean(mesh_extents)
-    # Target: max_vertices ≈ (mesh_size / pitch)^3
-    # => pitch ≈ mesh_size / (max_vertices)^(1/3)
-    target_pitch = mesh_size / (SPATIAL_QUERY_MAX_VERTICES ** (1 / 3))
-
-    # Ensure minimum pitch to avoid issues with very small meshes
-    target_pitch = max(target_pitch, 0.01)  # At least 1cm
-
-    try:
-        # Create voxel-downsampled copy
-        downsampled_mesh = mesh.copy()
-        downsampled_mesh.merge_vertices()
-        downsampled_mesh = downsampled_mesh.voxelized(pitch=target_pitch).marching_cubes
-
-        logger.info(
-            f"Voxel downsampled for spatial query: {original_vertices} -> {len(downsampled_mesh.vertices)} vertices "
-            f"(pitch={target_pitch:.4f}m)"
-        )
-        return downsampled_mesh
-    except Exception as e:
-        logger.warning(f"Voxel downsampling failed: {e}, using original mesh")
-        return mesh
 
 SIDE_MAP = {
     "left": "-x",
@@ -154,7 +120,7 @@ class ArchitecturalRelationEvaluator:
 
         sample_points = obj_bbox.sample_points()
         # Voxel downsample mesh for spatial query to prevent memory explosion
-        query_mesh = _voxel_downsample_for_query(arch_t_obj)
+        query_mesh = downsample_for_query(arch_t_obj)
         _log_memory(f"Before nearest.on_surface ({len(query_mesh.vertices)} verts, {len(sample_points)} points)")
         closest_points, distances, _ = query_mesh.nearest.on_surface(sample_points)
         _log_memory(f"After nearest.on_surface")

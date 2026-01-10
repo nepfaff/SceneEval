@@ -3,6 +3,7 @@ import trimesh
 import numpy as np
 from .bounding_box import BoundingBox
 from .config import SpatialRelationConfig
+from .utils import downsample_for_query
 
 logger = logging.getLogger(__name__)
 
@@ -99,11 +100,14 @@ class SpatialRelationEvaluator:
         
         # Get the front vector of the reference bounding box
         target_bbox_front = target_bbox.coord_axes @ self.front_vector
-        
+
         # Sample points from the target bounding box and shoot rays towards the front
         ray_origins = target_bbox.sample_points()
         ray_directions = np.tile(target_bbox_front, (len(ray_origins), 1))
-        ray_hits, ray_idxs, _ = reference_t_obj.ray.intersects_location(ray_origins, ray_directions, multiple_hits=False)
+
+        # Downsample reference mesh for ray casting to prevent slow queries on high-poly meshes
+        reference_t_obj_query = downsample_for_query(reference_t_obj)
+        ray_hits, ray_idxs, _ = reference_t_obj_query.ray.intersects_location(ray_origins, ray_directions, multiple_hits=False)
         
         # If there are no hits, the score is 0.0 (facing away)
         if len(ray_hits) == 0:
@@ -408,7 +412,7 @@ class SpatialRelationEvaluator:
             obj_to_sample_points_from = reference_t_obj
             comparison_object = target_t_obj
             num_sample_points = int(reference_bbox.volume * reference_bbox.cfg.sample_points_per_unit_volume)
-        
+
         num_sample_points = max(num_sample_points, self.cfg.distance_score.min_num_sample_points)
 
         # NOTE:
@@ -417,7 +421,10 @@ class SpatialRelationEvaluator:
 
         oriented_bbox: trimesh.primitives.Box = obj_to_sample_points_from.bounding_box_oriented
         sample_points = oriented_bbox.sample_volume(num_sample_points)
-        closest_points, distances, _ = comparison_object.nearest.on_surface(sample_points)
+
+        # Downsample comparison mesh for on_surface query to prevent slow R-tree queries on high-poly meshes
+        comparison_object_query = downsample_for_query(comparison_object)
+        closest_points, distances, _ = comparison_object_query.nearest.on_surface(sample_points)
         min_distance = np.min(distances)
 
         # Score is 1.0 when the distance is within the range

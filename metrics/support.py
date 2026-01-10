@@ -6,6 +6,7 @@ from warnings import warn
 from pydantic import BaseModel
 from scenes import Scene
 from vlm import BaseVLM
+from spatial.utils import downsample_for_query
 from .base import BaseMetric, MetricResult
 from .registry import register_vlm_metric
 
@@ -269,11 +270,14 @@ class SupportMetric(BaseMetric):
             valid_contact_pts = []
             all_distances = []
             for target in other_meshes:
-                
+
+                # Downsample target mesh for ray casting to prevent slow queries on high-poly meshes
+                target_query = downsample_for_query(target)
+
                 # Do ray casting
                 ray_origins = ray_origins.reshape(-1, 3)
                 ray_directions = np.tile(gravity_direction, (ray_origins.shape[0], 1))
-                ray_hit_pts, ray_hit_idxs, _ = target.ray.intersects_location(ray_origins, ray_directions, multiple_hits=False)
+                ray_hit_pts, ray_hit_idxs, _ = target_query.ray.intersects_location(ray_origins, ray_directions, multiple_hits=False)
                 all_hit_pts.extend(ray_hit_pts)
                 
                 # Skip this target object if no ray hits
