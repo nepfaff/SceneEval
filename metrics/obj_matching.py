@@ -130,7 +130,13 @@ class ObjMatching(BaseMetric):
                 continue
             
             if response.matched:
-                matching_result.per_category[response.matched_category][obj_id] = response.reason
+                # Validate that matched_category is actually in target categories
+                if response.matched_category in self.target_categories:
+                    matching_result.per_category[response.matched_category][obj_id] = response.reason
+                else:
+                    # VLM returned matched=True but with an invalid category, treat as not matched
+                    warn(f"VLM returned matched=True but matched_category '{response.matched_category}' is not in target categories. Treating as not matched.", RuntimeWarning)
+                    matching_result.not_matched_objs[obj_id] = f"Invalid match: VLM returned '{response.matched_category}' which is not in target categories. Actual: {response.actual_category}"
             else:
                 matching_result.not_matched_objs[obj_id] = response.reason
             
