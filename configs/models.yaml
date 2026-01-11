@@ -97,3 +97,10 @@ models:
     asset_datasets:
       - scene_agent
     hdri_strength: 0.4
+
+  SceneAgent_NoAssetValidation:
+    input_dir_name: SceneAgent_NoAssetValidation
+    output_dir_name: ${models.SceneAgent_NoAssetValidation.input_dir_name}
+    asset_datasets:
+      - scene_agent
+    hdri_strength: 0.4
