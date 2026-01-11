@@ -416,7 +416,8 @@ class SpatialRelationEvaluator:
         num_sample_points = max(num_sample_points, self.cfg.distance_score.min_num_sample_points)
 
         # Limit sample points to prevent slow on_surface queries
-        MAX_SAMPLE_POINTS = 2048
+        # 50000 gives ~5cm spacing for 2m objects - good coverage for small features
+        MAX_SAMPLE_POINTS = 50000
         if num_sample_points > MAX_SAMPLE_POINTS:
             logger.info(f"_distance_score: capping sample points from {num_sample_points} to {MAX_SAMPLE_POINTS}")
             num_sample_points = MAX_SAMPLE_POINTS
