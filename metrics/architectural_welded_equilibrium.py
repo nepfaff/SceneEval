@@ -151,6 +151,31 @@ class ArchitecturalWeldedEquilibriumMetricBase(BaseMetric):
         Returns:
             MetricResult with equilibrium data.
         """
+        # Early return for empty scenes
+        if self.scene.is_empty:
+            method_name = self.decomposition_method.upper()
+            result = MetricResult(
+                message=f"Skipped architectural welded equilibrium ({method_name}): scene has no objects",
+                data={
+                    "scene_stable": True,
+                    "num_stable_objects": 0,
+                    "num_unstable_objects": 0,
+                    "max_displacement": 0.0,
+                    "mean_displacement": 0.0,
+                    "max_rotation": 0.0,
+                    "mean_rotation": 0.0,
+                    "total_displacement": 0.0,
+                    "per_object_results": {},
+                    "welded_objects": [],
+                    "num_welded_objects": 0,
+                    "decomposition_method": self.decomposition_method,
+                    "skip_reason": "empty_scene",
+                },
+            )
+            if verbose:
+                print(f"\n{result.message}\n")
+            return result
+
         # Use output directory for Drake files (persisted for debugging/inspection).
         drake_scene_dir = self.output_dir / self.drake_scene_folder
         drake_scene_dir.mkdir(parents=True, exist_ok=True)

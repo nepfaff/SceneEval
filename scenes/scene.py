@@ -111,6 +111,16 @@ class Scene:
 
         return obj_id in self.carpet_obj_ids
 
+    @property
+    def is_empty(self) -> bool:
+        """
+        Check if the scene has no objects.
+
+        Returns:
+            True if the scene has no objects
+        """
+        return len(self.blender_scene.b_objs) == 0
+
     def get_obj_ids(self) -> list[str]:
         """
         Get the object IDs in the scene.

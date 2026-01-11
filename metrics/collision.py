@@ -49,6 +49,28 @@ class CollisionMetric(BaseMetric):
             result: the result of running the metric
         """
 
+        # Early return for empty scenes
+        if self.scene.is_empty:
+            result = MetricResult(
+                message="Skipped CollisionMetric: scene has no objects",
+                data={
+                    "scene_in_collision": False,
+                    "num_obj_in_collision": 0,
+                    "num_collision_pairs": 0,
+                    "max_penetration_depth": 0.0,
+                    "mean_penetration_depth": 0.0,
+                    "total_contact_points": 0,
+                    "collision_results": {},
+                    "excluded_carpet_ids": [],
+                    "num_excluded_carpets": 0,
+                    "excluded_placeholder_ids": [],
+                    "num_excluded_placeholders": 0,
+                    "skip_reason": "empty_scene",
+                }
+            )
+            print(f"\n{result.message}\n")
+            return result
+
         collision_manager = trimesh.collision.CollisionManager()
 
         # Get non-carpet object IDs (carpets are excluded from collision checks)

@@ -417,6 +417,11 @@ class TrimeshScene:
             convert_to_y_up: if True, apply Z-up to Y-up conversion for glTF convention
         """
 
+        # Skip export for empty scenes (no geometry to export)
+        if len(self.t_scene.geometry) == 0:
+            print(f"Warning: Cannot export empty scene (no geometries) to {file_path}")
+            return
+
         if convert_to_y_up:
             # Create a copy of the scene and apply Z-up to Y-up conversion (+90° X rotation)
             # glTF convention is Y-up, but our scene is Z-up

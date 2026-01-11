@@ -94,6 +94,34 @@ class DrakeCollisionMetricBase(BaseMetric):
         Returns:
             MetricResult with collision data.
         """
+        # Early return for empty scenes
+        if self.scene.is_empty:
+            method_name = self.decomposition_method.upper()
+            result = MetricResult(
+                message=f"Skipped Drake collision ({method_name}): scene has no objects",
+                data={
+                    "scene_in_collision": False,
+                    "num_obj_in_collision": 0,
+                    "num_collision_pairs": 0,
+                    "max_penetration_depth": 0.0,
+                    "min_penetration_depth": 0.0,
+                    "mean_penetration_depth": 0.0,
+                    "median_penetration_depth": 0.0,
+                    "collision_results": {},
+                    "num_obj_in_floor_collision": 0,
+                    "max_floor_penetration_depth": 0.0,
+                    "mean_floor_penetration_depth": 0.0,
+                    "floor_collision_results": {},
+                    "decomposition_method": self.decomposition_method,
+                    "excluded_carpet_ids": [],
+                    "num_excluded_carpets": 0,
+                    "skip_reason": "empty_scene",
+                },
+            )
+            if verbose:
+                print(f"\n{result.message}\n")
+            return result
+
         # Use output directory for Drake files (persisted for debugging/inspection).
         drake_scene_dir = self.output_dir / self.drake_scene_folder
         drake_scene_dir.mkdir(parents=True, exist_ok=True)
