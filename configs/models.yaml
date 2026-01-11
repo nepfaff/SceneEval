@@ -118,3 +118,17 @@ models:
     asset_datasets:
       - scene_agent
     hdri_strength: 0.4
+
+  SceneAgent_NoSpecializedTools:
+    input_dir_name: SceneAgent_NoSpecializedTools
+    output_dir_name: ${models.SceneAgent_NoSpecializedTools.input_dir_name}
+    asset_datasets:
+      - scene_agent
+    hdri_strength: 0.4
+
+  SceneAgent_HSSD:
+    input_dir_name: SceneAgent_HSSD
+    output_dir_name: ${models.SceneAgent_HSSD.input_dir_name}
+    asset_datasets:
+      - scene_agent
+    hdri_strength: 0.4
