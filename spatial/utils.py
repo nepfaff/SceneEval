@@ -23,7 +23,16 @@ def downsample_for_query(mesh: trimesh.Trimesh) -> trimesh.Trimesh:
     Returns:
         The original mesh if under threshold, or a downsampled copy
     """
-    if not hasattr(mesh, 'vertices') or len(mesh.vertices) <= SPATIAL_QUERY_MAX_VERTICES:
+    if not hasattr(mesh, 'vertices'):
+        logger.warning(f"downsample_for_query: mesh has no vertices attribute, type={type(mesh)}")
+        return mesh
+
+    vertex_count = len(mesh.vertices)
+    face_count = len(mesh.faces) if hasattr(mesh, 'faces') else 0
+    logger.info(f"downsample_for_query: input mesh has {vertex_count} vertices, {face_count} faces")
+
+    if vertex_count <= SPATIAL_QUERY_MAX_VERTICES:
+        logger.info(f"downsample_for_query: mesh under threshold ({SPATIAL_QUERY_MAX_VERTICES}), returning unchanged")
         return mesh
 
     original_vertices = len(mesh.vertices)

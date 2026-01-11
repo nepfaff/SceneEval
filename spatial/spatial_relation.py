@@ -415,12 +415,16 @@ class SpatialRelationEvaluator:
 
         num_sample_points = max(num_sample_points, self.cfg.distance_score.min_num_sample_points)
 
-        # NOTE:
-        # This limits the number of sample points to prevent memory explosion
-        # num_sample_points = min(num_sample_points, 1024)
+        # Limit sample points to prevent slow on_surface queries
+        MAX_SAMPLE_POINTS = 2048
+        if num_sample_points > MAX_SAMPLE_POINTS:
+            logger.info(f"_distance_score: capping sample points from {num_sample_points} to {MAX_SAMPLE_POINTS}")
+            num_sample_points = MAX_SAMPLE_POINTS
 
         oriented_bbox: trimesh.primitives.Box = obj_to_sample_points_from.bounding_box_oriented
         sample_points = oriented_bbox.sample_volume(num_sample_points)
+
+        logger.info(f"_distance_score: sampling {len(sample_points)} points from object with {len(obj_to_sample_points_from.vertices)} vertices")
 
         # Downsample comparison mesh for on_surface query to prevent slow R-tree queries on high-poly meshes
         comparison_object_query = downsample_for_query(comparison_object)
