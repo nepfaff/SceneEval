@@ -47,6 +47,7 @@ dependencies = [
     "objathor",
     "attrs",
     "pip",  # Needed by prepare_objathor.py to install ai2thor from custom index
+    "fast-simplification>=0.1.13",
 ]
 
 [dependency-groups]
