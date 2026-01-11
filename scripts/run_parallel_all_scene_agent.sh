@@ -1,7 +1,7 @@
 #!/bin/bash
 # Run scene evaluation in parallel for SceneAgent scenes
 #
-# Usage: ./scripts/run_parallel_all_scene_agent.sh <num_workers> [input_path] [--skip-existing] [extra_args...]
+# Usage: ./scripts/run_parallel_all_scene_agent.sh <num_workers> [input_path] [--output-path <path>] [--skip-existing] [extra_args...]
 #
 # Examples:
 #   # Evaluate all SceneAgent scenes with 4 workers (default input path)
@@ -10,11 +10,17 @@
 #   # Skip scenes that already have complete evaluations
 #   ./scripts/run_parallel_all_scene_agent.sh 4 --skip-existing
 #
+#   # With custom output path
+#   ./scripts/run_parallel_all_scene_agent.sh 4 --output-path /path/to/output
+#
+#   # With custom output path and skip existing
+#   ./scripts/run_parallel_all_scene_agent.sh 4 --output-path /path/to/output --skip-existing
+#
 #   # With custom input path
 #   ./scripts/run_parallel_all_scene_agent.sh 4 /path/to/custom/input
 #
-#   # With custom input path and skip existing
-#   ./scripts/run_parallel_all_scene_agent.sh 4 /path/to/custom/input --skip-existing
+#   # With custom input path, output path, and skip existing
+#   ./scripts/run_parallel_all_scene_agent.sh 4 /path/to/custom/input --output-path /path/to/output --skip-existing
 #
 #   # With extra args
 #   ./scripts/run_parallel_all_scene_agent.sh 8 input/SceneAgent \
@@ -47,27 +53,62 @@ fi
 
 shift 1  # Remove num_workers arg
 
-# Check for --skip-existing flag (can appear anywhere in remaining args)
+# Check for --skip-existing and --output-path flags, and input path
 SKIP_EXISTING=false
-TEMP_ARGS=()
-for arg in "$@"; do
-    if [ "$arg" = "--skip-existing" ]; then
-        SKIP_EXISTING=true
-    else
-        TEMP_ARGS+=("$arg")
+OUTPUT_PATH=""
+INPUT_PATH=""
+EXTRA_ARGS=()
+
+# First pass: check if the first non-flag arg is an input path (directory)
+TEMP_ARGS=("$@")
+for arg in "${TEMP_ARGS[@]}"; do
+    if [ -z "$INPUT_PATH" ] && [ -d "$arg" ]; then
+        INPUT_PATH="$arg"
+        break
+    fi
+    # Stop looking if we hit a flag
+    if [[ "$arg" == --* ]]; then
+        break
     fi
 done
-set -- "${TEMP_ARGS[@]}"
 
-# Check if next arg is an input path (directory) or an extra arg (contains '=')
-INPUT_PATH=""
-if [ $# -gt 0 ] && [ -d "$1" ]; then
-    INPUT_PATH="$1"
-    shift 1
-fi
+# Second pass: extract flags and remaining extra args
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --skip-existing)
+            SKIP_EXISTING=true
+            shift
+            ;;
+        --output-path)
+            if [ -n "$2" ] && [ "${2:0:1}" != "-" ]; then
+                OUTPUT_PATH="$2"
+                shift 2
+            else
+                echo "Error: --output-path requires a path argument"
+                exit 1
+            fi
+            ;;
+        *)
+            # Skip input path if already captured, otherwise add to extra args
+            if [ "$1" = "$INPUT_PATH" ]; then
+                shift
+            else
+                EXTRA_ARGS+=("$1")
+                shift
+            fi
+            ;;
+    esac
+done
+set -- "${EXTRA_ARGS[@]}"
 
-# Helper function: Extract output_dir from extra args, default to ./output_eval
+# Helper function: Get output_dir - prioritize OUTPUT_PATH, then extra args, then default
 get_output_dir() {
+    # First check if OUTPUT_PATH is set via --output-path flag
+    if [ -n "$OUTPUT_PATH" ]; then
+        echo "$OUTPUT_PATH"
+        return
+    fi
+    # Otherwise check extra args for output_dir=...
     local default_dir="./output_eval"
     for arg in "$@"; do
         if [[ "$arg" =~ output_dir=([^[:space:]]+) ]]; then
@@ -204,6 +245,7 @@ echo "========================================"
 echo "Run ID: $RUN_ID"
 echo "Method: $METHOD"
 echo "Input directory: $INPUT_DIR"
+echo "Output directory: $(get_output_dir "$@")"
 echo "Scene IDs found: $SCENE_IDS"
 echo "Total scenes: $TOTAL_SCENES"
 echo "Workers: $NUM_WORKERS"
@@ -246,11 +288,18 @@ for ((i=0; i<TOTAL_SCENES; i+=SCENES_PER_WORKER)); do
         INPUT_ARGS="evaluation_plan.input_cfg.root_dir=$INPUT_ROOT_DIR evaluation_plan.input_cfg.scene_methods=[$INPUT_METHOD] assets.scene_agent.dataset_root_path=$INPUT_PATH metrics.DrakeCollisionMetricSceneAgent.input_root=$INPUT_PATH metrics.ArchitecturalWeldedEquilibriumMetricSceneAgent.input_root=$INPUT_PATH metrics.CombinedWeldedEquilibriumMetricSceneAgent.input_root=$INPUT_PATH"
     fi
 
+    # Build output path argument if set
+    OUTPUT_PATH_ARG=""
+    if [ -n "$OUTPUT_PATH" ]; then
+        OUTPUT_PATH_ARG="evaluation_plan.evaluation_cfg.output_dir=$OUTPUT_PATH"
+    fi
+
     python main.py \
         evaluation_plan=sceneagent_plan \
         'evaluation_plan.input_cfg.scene_mode=list' \
         "evaluation_plan.input_cfg.scene_list=[$WORKER_SCENES]" \
         $INPUT_ARGS \
+        $OUTPUT_PATH_ARG \
         "$@" \
         > "${LOG_DIR}/worker_${WORKER_COUNT}.log" 2>&1 &
 

@@ -1,7 +1,7 @@
 #!/bin/bash
 # Run scene evaluation in parallel for ALL scenes found in the input directory
 #
-# Usage: ./scripts/run_parallel_all.sh <method> <num_workers> [--skip-existing] [extra_args...]
+# Usage: ./scripts/run_parallel_all.sh <method> <num_workers> [--output-path <path>] [--skip-existing] [extra_args...]
 #
 # Examples:
 #   # Evaluate all LayoutVLM scenes with 4 workers
@@ -9,6 +9,12 @@
 #
 #   # Skip scenes that already have complete evaluations
 #   ./scripts/run_parallel_all.sh LayoutVLM 4 --skip-existing
+#
+#   # With custom output path
+#   ./scripts/run_parallel_all.sh LayoutVLM 4 --output-path /path/to/output
+#
+#   # With custom output path and skip existing
+#   ./scripts/run_parallel_all.sh LayoutVLM 4 --output-path /path/to/output --skip-existing
 #
 #   # Full example with metrics
 #   ./scripts/run_parallel_all.sh SceneWeaver 8 \
@@ -41,24 +47,41 @@ fi
 
 shift 2  # Remove first two args, rest are passed to main.py
 
-# Check for --skip-existing flag
+# Check for --skip-existing and --output-path flags
 SKIP_EXISTING=false
-for arg in "$@"; do
-    if [ "$arg" = "--skip-existing" ]; then
-        SKIP_EXISTING=true
-    fi
-done
-# Remove --skip-existing from args passed to main.py
+OUTPUT_PATH=""
 EXTRA_ARGS=()
-for arg in "$@"; do
-    if [ "$arg" != "--skip-existing" ]; then
-        EXTRA_ARGS+=("$arg")
-    fi
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --skip-existing)
+            SKIP_EXISTING=true
+            shift
+            ;;
+        --output-path)
+            if [ -n "$2" ] && [ "${2:0:1}" != "-" ]; then
+                OUTPUT_PATH="$2"
+                shift 2
+            else
+                echo "Error: --output-path requires a path argument"
+                exit 1
+            fi
+            ;;
+        *)
+            EXTRA_ARGS+=("$1")
+            shift
+            ;;
+    esac
 done
 set -- "${EXTRA_ARGS[@]}"
 
-# Helper function: Extract output_dir from extra args, default to ./output_eval
+# Helper function: Get output_dir - prioritize OUTPUT_PATH, then extra args, then default
 get_output_dir() {
+    # First check if OUTPUT_PATH is set via --output-path flag
+    if [ -n "$OUTPUT_PATH" ]; then
+        echo "$OUTPUT_PATH"
+        return
+    fi
+    # Otherwise check extra args for output_dir=...
     local default_dir="./output_eval"
     for arg in "$@"; do
         if [[ "$arg" =~ output_dir=([^[:space:]]+) ]]; then
@@ -184,6 +207,7 @@ echo "========================================"
 echo "Run ID: $RUN_ID"
 echo "Method: $METHOD"
 echo "Input directory: $INPUT_DIR"
+echo "Output directory: $(get_output_dir "$@")"
 echo "Scene IDs found: $SCENE_IDS"
 echo "Total scenes: $TOTAL_SCENES"
 echo "Workers: $NUM_WORKERS"
@@ -217,10 +241,17 @@ for ((i=0; i<TOTAL_SCENES; i+=SCENES_PER_WORKER)); do
 
     echo "Starting worker $WORKER_COUNT: scenes [$WORKER_SCENES]"
 
+    # Build output path argument if set
+    OUTPUT_PATH_ARG=""
+    if [ -n "$OUTPUT_PATH" ]; then
+        OUTPUT_PATH_ARG="evaluation_plan.evaluation_cfg.output_dir=$OUTPUT_PATH"
+    fi
+
     python main.py \
         "evaluation_plan.input_cfg.scene_methods=[$METHOD]" \
         'evaluation_plan.input_cfg.scene_mode=list' \
         "evaluation_plan.input_cfg.scene_list=[$WORKER_SCENES]" \
+        $OUTPUT_PATH_ARG \
         "$@" \
         > "${LOG_DIR}/worker_${WORKER_COUNT}.log" 2>&1 &
 
