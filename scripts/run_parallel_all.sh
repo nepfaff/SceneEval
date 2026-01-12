@@ -1,7 +1,17 @@
 #!/bin/bash
 # Run scene evaluation in parallel for ALL scenes found in the input directory
 #
-# Usage: ./scripts/run_parallel_all.sh <method> <num_workers> [--output-path <path>] [--skip-existing] [extra_args...]
+# Usage: ./scripts/run_parallel_all.sh <method> <num_workers> [--output-path <path>] [--skip-existing] [--max-retries <n>] [extra_args...]
+#
+# Options:
+#   --skip-existing     Skip scenes that already have complete evaluations
+#   --output-path PATH  Custom output directory
+#   --max-retries N     Max retry attempts per scene on failure (default: 5)
+#
+# Features:
+#   - Automatic segfault protection: each scene is processed individually
+#   - Failed scenes are automatically retried up to --max-retries times
+#   - State files track progress for debugging and manual recovery
 #
 # Examples:
 #   # Evaluate all LayoutVLM scenes with 4 workers
@@ -9,6 +19,9 @@
 #
 #   # Skip scenes that already have complete evaluations
 #   ./scripts/run_parallel_all.sh LayoutVLM 4 --skip-existing
+#
+#   # With custom max retries (default is 5)
+#   ./scripts/run_parallel_all.sh LayoutVLM 4 --max-retries 3
 #
 #   # With custom output path
 #   ./scripts/run_parallel_all.sh LayoutVLM 4 --output-path /path/to/output
@@ -47,9 +60,10 @@ fi
 
 shift 2  # Remove first two args, rest are passed to main.py
 
-# Check for --skip-existing and --output-path flags
+# Check for --skip-existing, --output-path, and --max-retries flags
 SKIP_EXISTING=false
 OUTPUT_PATH=""
+MAX_RETRIES=5
 EXTRA_ARGS=()
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -63,6 +77,15 @@ while [ $# -gt 0 ]; do
                 shift 2
             else
                 echo "Error: --output-path requires a path argument"
+                exit 1
+            fi
+            ;;
+        --max-retries)
+            if [ -n "$2" ] && [ "${2:0:1}" != "-" ]; then
+                MAX_RETRIES="$2"
+                shift 2
+            else
+                echo "Error: --max-retries requires a number"
                 exit 1
             fi
             ;;
@@ -112,10 +135,11 @@ is_eval_complete() {
     return 0
 }
 
-# Create unique run ID and log directory
+# Create unique run ID, log directory, and state directory
 RUN_ID="$(date +%Y%m%d_%H%M%S)_$$"
 LOG_DIR="logs/run_${RUN_ID}"
-mkdir -p "$LOG_DIR"
+STATE_DIR="${LOG_DIR}/state"
+mkdir -p "$LOG_DIR" "$STATE_DIR"
 
 # Find all scene IDs from input directory
 INPUT_DIR="input/$METHOD"
@@ -212,6 +236,7 @@ echo "Scene IDs found: $SCENE_IDS"
 echo "Total scenes: $TOTAL_SCENES"
 echo "Workers: $NUM_WORKERS"
 echo "Scenes per worker: ~$SCENES_PER_WORKER"
+echo "Max retries per scene: $MAX_RETRIES"
 echo "Extra args: $@"
 echo "========================================"
 echo ""
@@ -247,10 +272,13 @@ for ((i=0; i<TOTAL_SCENES; i+=SCENES_PER_WORKER)); do
         OUTPUT_PATH_ARG="evaluation_plan.evaluation_cfg.output_dir=$OUTPUT_PATH"
     fi
 
-    python main.py \
+    # Use fault-tolerant worker wrapper that processes scenes one-by-one with retry logic
+    "${SCRIPT_DIR}/run_worker_with_restart.sh" \
+        "$WORKER_COUNT" \
+        "$WORKER_SCENES" \
+        "$STATE_DIR" \
+        "$MAX_RETRIES" \
         "evaluation_plan.input_cfg.scene_methods=[$METHOD]" \
-        'evaluation_plan.input_cfg.scene_mode=list' \
-        "evaluation_plan.input_cfg.scene_list=[$WORKER_SCENES]" \
         $OUTPUT_PATH_ARG \
         "$@" \
         > "${LOG_DIR}/worker_${WORKER_COUNT}.log" 2>&1 &
@@ -286,12 +314,42 @@ echo "========================================"
 # Disable EXIT trap for normal completion
 trap - EXIT
 
+# Summarize results from state files
+echo ""
+echo "Summary by worker:"
+TOTAL_COMPLETED=0
+TOTAL_FAILED=0
+for state_file in "$STATE_DIR"/worker_*_state.json; do
+    if [ -f "$state_file" ]; then
+        WORKER=$(basename "$state_file" | sed 's/worker_\([0-9]*\)_state.json/\1/')
+        COMPLETED=$(jq '.completed | length' "$state_file")
+        FAILED_SCENES=$(jq '.failed | length' "$state_file")
+        TOTAL_COMPLETED=$((TOTAL_COMPLETED + COMPLETED))
+        TOTAL_FAILED=$((TOTAL_FAILED + FAILED_SCENES))
+        echo "  Worker $WORKER: $COMPLETED completed, $FAILED_SCENES failed"
+    fi
+done
+echo ""
+echo "Total: $TOTAL_COMPLETED completed, $TOTAL_FAILED failed"
+echo ""
+
 if [ $FAILED -eq 1 ]; then
-    echo "SOME WORKERS FAILED: ${FAILED_WORKERS[*]}"
+    echo "SOME WORKERS HAD FAILURES"
+    echo ""
+    # Show failed scenes from all workers
+    echo "Failed scenes:"
+    for state_file in "$STATE_DIR"/worker_*_state.json; do
+        if [ -f "$state_file" ]; then
+            jq -r '.failed[] | "  Scene \(.scene) (after \(.attempts) attempts)"' "$state_file" 2>/dev/null
+        fi
+    done
+    echo ""
     echo "Check ${LOG_DIR}/worker_*.log for details"
+    echo "State files: ${STATE_DIR}/"
     exit 1
 else
-    echo "ALL WORKERS COMPLETED SUCCESSFULLY"
+    echo "ALL SCENES COMPLETED SUCCESSFULLY"
 fi
 echo "Logs: ${LOG_DIR}/"
+echo "State files: ${STATE_DIR}/"
 echo "========================================"
