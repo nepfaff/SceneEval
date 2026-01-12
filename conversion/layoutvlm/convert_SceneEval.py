@@ -121,11 +121,10 @@ def multiply_quaternions(q1: list, q2: list) -> list:
 def create_transform(position: list, rotation: list) -> dict:
     """Create a SceneEval transform from position and Euler rotation.
 
-    SceneEval's blender_scene.py applies a -90° X rotation as post-multiplication
-    for non-SceneWeaver objects (line 389-391). To counteract this, we must
-    pre-compose a +90° X rotation into the scene transform.
-
-    Formula: scene_quaternion = q_yaw * q_x90
+    Applies two rotation compensations:
+    1. +90° Z (yaw) to convert from LayoutVLM coordinate system (front=+X)
+       to Objaverse/SceneEval coordinate system (front=+Y)
+    2. +90° X to counteract Blender's -90° X post-rotation for non-SceneWeaver objects
 
     Args:
         position: [x, y, z] position
@@ -136,8 +135,12 @@ def create_transform(position: list, rotation: list) -> dict:
     """
     rx, ry, rz = rotation
 
-    # Yaw rotation from LayoutVLM
-    q_yaw = euler_to_quaternion(rx, ry, rz)
+    # Add +90° to yaw to convert from LayoutVLM coordinate system (front=+X)
+    # to Objaverse/SceneEval coordinate system (front=+Y)
+    rz_adjusted = rz + 90.0
+
+    # Yaw rotation from LayoutVLM (with coordinate system compensation)
+    q_yaw = euler_to_quaternion(rx, ry, rz_adjusted)
 
     # +90° X rotation to counteract Blender's -90° X post-rotation
     # q_x90 = [sin(45°), 0, 0, cos(45°)]
