@@ -63,8 +63,8 @@ METHODS=(
     # "Holodeck:output_eval/render_holodeck"
     # "HSM:output_eval/render_hsm"
     # "HSM_hf:output_eval/render_hsm_hf"
-    # "LayoutVLM_Curated:output_eval/render_layoutvlm_curated"
-    "LayoutVLM_Objaverse:output_eval/render_layoutvlm_objaverse"
+    "LayoutVLM_Curated:output_eval/render_layoutvlm_curated"
+    # "LayoutVLM_Objaverse:output_eval/render_layoutvlm_objaverse"
     # "IDesign:output_eval/render_idesign"
 )
 
@@ -284,6 +284,12 @@ for entry in "${VALID_METHODS[@]}"; do
             ;;
     esac
 
+    # Override input_dir_name if using custom input path
+    INPUT_DIR_NAME_OVERRIDE=""
+    if [ -n "$INPUT_DIR_OVERRIDE" ]; then
+        INPUT_DIR_NAME_OVERRIDE="models.${METHOD}.input_dir_name=$(basename $INPUT_DIR)"
+    fi
+
     env $GPU_ENV .venv/bin/python main.py \
         evaluation_plan=room_views_plan \
         "evaluation_plan.input_cfg.scene_methods=[$METHOD]" \
@@ -291,6 +297,7 @@ for entry in "${VALID_METHODS[@]}"; do
         "evaluation_plan.evaluation_cfg.output_dir=$OUTPUT_DIR" \
         "evaluation_plan.input_cfg.root_dir=$INPUT_ROOT" \
         $ASSET_OVERRIDE \
+        $INPUT_DIR_NAME_OVERRIDE \
         "blender.resolution_x=$RESOLUTION" \
         "blender.resolution_y=$RESOLUTION" \
         > "${LOG_DIR}/${METHOD}.log" 2>&1 &
