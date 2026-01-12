@@ -2,6 +2,7 @@ evaluation_cfg:
   metrics:
     - AccessibilityMetric
   output_dir: ./output_eval_test
+  skip_completed: True
   save_blend_file: False
   save_trimesh_glb: True
   vlm: GPT

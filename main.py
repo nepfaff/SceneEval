@@ -45,6 +45,7 @@ load_dotenv()
 class EvaluationConfig:
     metrics: list[str]
     output_dir: str
+    skip_completed: bool
     save_blend_file: bool
     save_trimesh_glb: bool
     vlm: str
@@ -378,6 +379,53 @@ def _hide_sceneweaver_placeholders() -> list[str]:
     return hidden
 
 
+def _is_room_views_complete(output_dir: pathlib.Path) -> bool:
+    """Check if a scene has all 9 room views rendered.
+
+    Used for resume functionality - skip scenes that are already complete.
+    """
+    room_views_dir = output_dir / "room_views"
+    if not room_views_dir.exists():
+        return False
+    expected = ["room_0_top.png"] + [f"room_{i}_side_{(i-1)*45}.png" for i in range(1, 9)]
+    return all((room_views_dir / f).exists() for f in expected)
+
+
+# Tile sizes to try on OOM (2048 = effectively no tiling for typical renders)
+_OOM_TILE_SIZES = [2048, 512, 256, 128, 64]
+
+
+def _render_with_oom_retry(output_path: pathlib.Path) -> None:
+    """Render with automatic tile size reduction on OOM.
+
+    Starts with default tile size (2048 = effectively no tiling).
+    On OOM, retries with progressively smaller tile sizes.
+    Smaller tiles = less VRAM per tile, but more render passes (slower).
+    Quality is identical regardless of tile size.
+    """
+    import bpy
+
+    bpy.context.scene.render.filepath = str(output_path)
+
+    for i, tile_size in enumerate(_OOM_TILE_SIZES):
+        try:
+            bpy.context.scene.cycles.tile_size = tile_size
+            if i > 0:
+                # Disable persistent data to free memory between renders
+                bpy.context.scene.render.use_persistent_data = False
+            bpy.ops.render.render(write_still=True)
+            if i > 0:
+                print(f"  Rendered with tile_size={tile_size} after {i} OOM retries")
+            return
+        except RuntimeError as e:
+            if "Out of memory" in str(e):
+                print(f"  OOM with tile_size={tile_size}, retrying with smaller tiles...")
+                continue
+            raise
+
+    raise RuntimeError(f"Failed to render {output_path} even with smallest tile size ({_OOM_TILE_SIZES[-1]})")
+
+
 def _render_room_views_from_blend(
     blend_path: pathlib.Path,
     output_dir: pathlib.Path,
@@ -446,6 +494,9 @@ def _render_room_views_from_blend(
     bpy.context.scene.cycles.samples = 128
     bpy.context.scene.cycles.use_denoising = True
     bpy.context.scene.render.use_persistent_data = True  # Keep BVH/textures in memory for multiple renders
+    # Enable tiled rendering for memory management (allows retry with smaller tiles on OOM)
+    bpy.context.scene.cycles.use_auto_tile = True
+    bpy.context.scene.cycles.tile_size = 2048  # Default (effectively no tiling), will reduce on OOM
     bpy.context.scene.render.resolution_x = resolution
     bpy.context.scene.render.resolution_y = resolution
     bpy.context.scene.render.film_transparent = True
@@ -546,10 +597,9 @@ def _render_room_views_from_blend(
 
         bpy.context.view_layer.update()
 
-        # Render
+        # Render with OOM retry (will reduce tile size if GPU runs out of memory)
         output_path = room_views_dir / f"{view['name']}.png"
-        bpy.context.scene.render.filepath = str(output_path)
-        bpy.ops.render.render(write_still=True)
+        _render_with_oom_retry(output_path)
         print(f"  Rendered: {output_path}")
 
     # Restore walls and cleanup
@@ -817,6 +867,9 @@ def _render_room_views_from_current_scene(
     bpy.context.scene.cycles.samples = 128
     bpy.context.scene.cycles.use_denoising = True
     bpy.context.scene.render.use_persistent_data = True  # Keep BVH/textures in memory for multiple renders
+    # Enable tiled rendering for memory management (allows retry with smaller tiles on OOM)
+    bpy.context.scene.cycles.use_auto_tile = True
+    bpy.context.scene.cycles.tile_size = 2048  # Default (effectively no tiling), will reduce on OOM
     bpy.context.scene.render.resolution_x = resolution
     bpy.context.scene.render.resolution_y = resolution
     bpy.context.scene.render.film_transparent = True
@@ -903,9 +956,9 @@ def _render_room_views_from_current_scene(
             hide_walls_for_view(cam.location, scene_center, is_top_view=False)
 
         bpy.context.view_layer.update()
+        # Render with OOM retry (will reduce tile size if GPU runs out of memory)
         output_path = room_views_dir / f"{view['name']}.png"
-        bpy.context.scene.render.filepath = str(output_path)
-        bpy.ops.render.render(write_still=True)
+        _render_with_oom_retry(output_path)
         print(f"  Rendered: {output_path}")
 
     restore_all_walls()
@@ -1106,6 +1159,11 @@ def main(cfg: DictConfig) -> None:
             # Create the output directory
             output_dir: pathlib.Path = pathlib.Path(evaluation_plan.evaluation_cfg.output_dir) / cfg.models[method].output_dir_name / scene_state.name
             output_dir.mkdir(parents=True, exist_ok=True)
+
+            # Skip if scene already complete (resume functionality)
+            if evaluation_plan.evaluation_cfg.skip_completed and _is_room_views_complete(output_dir):
+                print(f"Skipping completed scene: {scene_state.name}")
+                continue
 
             # Set up per-scene logging (logs to both file and stdout)
             log_path = output_dir / "eval.log"

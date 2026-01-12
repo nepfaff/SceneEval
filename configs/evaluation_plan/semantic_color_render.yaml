@@ -11,6 +11,7 @@ evaluation_cfg:
     # - OutOfBoundMetric
     # - OpeningClearanceMetric
   output_dir: ./output_eval
+  skip_completed: True
   save_blend_file: True
   save_trimesh_glb: False
   vlm: GPT

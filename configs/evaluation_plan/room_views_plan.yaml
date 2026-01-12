@@ -5,6 +5,7 @@
 evaluation_cfg:
   metrics: []
   output_dir: ./output_eval/room_views_test
+  skip_completed: True  # Skip scenes that already have all 9 room views rendered
   save_blend_file: True
   save_trimesh_glb: False
   vlm: GPT

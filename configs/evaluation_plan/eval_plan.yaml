@@ -22,6 +22,7 @@ evaluation_cfg:
     - ArchitecturalWeldedEquilibriumMetricVHACD
     - CombinedWeldedEquilibriumMetricVHACD
   output_dir: ./output_eval
+  skip_completed: True  # Skip scenes that already have all 9 room views rendered
   save_blend_file: True
   save_trimesh_glb: True
   vlm: GPT

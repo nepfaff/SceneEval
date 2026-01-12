@@ -55,9 +55,11 @@ METHODS=(
     # "SceneAgent_NoAssetValidation:output_eval/render_sceneagent_noassetvalidation"
     # "SceneAgent_NoObserveScene:output_eval/render_sceneagent_noobservescene"
     # "SceneAgent_Ours_Room:output_eval/render_sceneagent_ours_room"
-    "SceneAgent_Ours_House:output_eval/render_sceneagent_ours_house"
+    # "SceneAgent_Ours_House:output_eval/render_sceneagent_ours_house"
     # "SceneAgent_NoSpecializedTools:output_eval/render_sceneagent_nospecializedtools"
     # "SceneAgent_HSSD:output_eval/render_sceneagent_hssd"
+    # "SceneAgent_NoSpecializedTools:output_eval/render_sceneagent_nospecializedtools"
+    "SceneAgent_HSSD:output_eval/render_sceneagent_hssd"
     # "Holodeck:output_eval/render_holodeck"
     # "HSM:output_eval/render_hsm"
     # "HSM_hf:output_eval/render_hsm_hf"
@@ -186,12 +188,27 @@ for entry in "${METHODS[@]}"; do
 
     if [ -d "$INPUT_DIR" ]; then
         SCENE_COUNT=$(ls "$INPUT_DIR"/scene_*.json 2>/dev/null | wc -l)
+
+        # Count completed scenes (those with all 9 room views)
+        COMPLETED=0
+        if [ -d "$OUTPUT_DIR/$METHOD" ]; then
+            for scene_dir in "$OUTPUT_DIR/$METHOD"/scene_*/; do
+                if [ -d "$scene_dir/room_views" ]; then
+                    view_count=$(ls "$scene_dir/room_views/"room_*.png 2>/dev/null | wc -l)
+                    if [ "$view_count" -eq 9 ]; then
+                        COMPLETED=$((COMPLETED + 1))
+                    fi
+                fi
+            done
+        fi
+        REMAINING=$((SCENE_COUNT - COMPLETED))
+
         if [ "$GPU_COUNT" -gt 0 ]; then
             PREVIEW_GPU="${GPU_IDS[$PREVIEW_GPU_INDEX]}"
-            echo "  - $METHOD: $SCENE_COUNT scenes -> $OUTPUT_DIR [GPU $PREVIEW_GPU]"
+            echo "  - $METHOD: $REMAINING/$SCENE_COUNT to render ($COMPLETED complete) -> $OUTPUT_DIR [GPU $PREVIEW_GPU]"
             PREVIEW_GPU_INDEX=$(( (PREVIEW_GPU_INDEX + 1) % GPU_COUNT ))
         else
-            echo "  - $METHOD: $SCENE_COUNT scenes -> $OUTPUT_DIR"
+            echo "  - $METHOD: $REMAINING/$SCENE_COUNT to render ($COMPLETED complete) -> $OUTPUT_DIR"
         fi
         VALID_METHODS+=("$entry")
     else
