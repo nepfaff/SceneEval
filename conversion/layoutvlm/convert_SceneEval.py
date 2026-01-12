@@ -316,6 +316,9 @@ def convert_single_scene(
     for i, (layout_key, asset_key) in enumerate(zip(layout_keys, scene_asset_keys)):
         layout_info = layout_data[layout_key]
         position = layout_info.get("position", [0, 0, 0])
+        # Handle 2D positions (x, y) by defaulting z to 0
+        if len(position) == 2:
+            position = [position[0], position[1], 0]
         rotation = layout_info.get("rotation", [0, 0, 0])
 
         # Get objaverse UID from our mapping
@@ -348,7 +351,8 @@ def convert_single_scene(
 def convert_layoutvlm_run(
     source_dir: Path,
     target_dir: Path,
-    mapping: Optional[dict] = None
+    mapping: Optional[dict] = None,
+    scenes: Optional[str] = None
 ) -> None:
     """Convert LayoutVLM output to SceneEval format.
 
@@ -357,6 +361,8 @@ def convert_layoutvlm_run(
         target_dir: Path to SceneEval input directory (e.g., input/LayoutVLM/)
         mapping: Optional dict mapping source scene index to target scene ID
                  e.g., {"0": 106, "1": 56} means scene_000 -> scene_106
+        scenes: Optional comma-separated list of scene indices to convert
+                e.g., "0,1,2" means only convert scene_000, scene_001, scene_002
     """
     source_dir = Path(source_dir).expanduser().resolve()
     target_dir = Path(target_dir).expanduser().resolve()
@@ -371,6 +377,11 @@ def convert_layoutvlm_run(
         d for d in source_dir.iterdir()
         if d.is_dir() and d.name.startswith("scene_")
     ])
+
+    # Filter by --scenes if provided
+    if scenes:
+        scene_filter = set(int(x) for x in scenes.split(','))
+        scene_dirs = [d for d in scene_dirs if int(d.name.split('_')[1]) in scene_filter]
 
     if not scene_dirs:
         raise ValueError(f"No scene directories found in {source_dir}")
@@ -426,13 +437,19 @@ def main():
         default=None,
         help='JSON mapping from source index to target ID, e.g., \'{"0": 106, "1": 56}\''
     )
+    parser.add_argument(
+        "--scenes",
+        type=str,
+        default=None,
+        help="Comma-separated list of scene indices to convert (e.g., '0,1,2')"
+    )
     args = parser.parse_args()
 
     mapping = None
     if args.mapping:
         mapping = json.loads(args.mapping)
 
-    convert_layoutvlm_run(args.source_dir, args.target_dir, mapping)
+    convert_layoutvlm_run(args.source_dir, args.target_dir, mapping, args.scenes)
 
 
 if __name__ == "__main__":
