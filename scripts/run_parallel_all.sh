@@ -1,10 +1,11 @@
 #!/bin/bash
 # Run scene evaluation in parallel for ALL scenes found in the input directory
 #
-# Usage: ./scripts/run_parallel_all.sh <method> <num_workers> [--output-path <path>] [--skip-existing] [--max-retries <n>] [extra_args...]
+# Usage: ./scripts/run_parallel_all.sh <method> <num_workers> [--input-path <path>] [--output-path <path>] [--skip-existing] [--max-retries <n>] [extra_args...]
 #
 # Options:
 #   --skip-existing     Skip scenes that already have complete evaluations
+#   --input-path PATH   Custom input directory (default: input/<method>)
 #   --output-path PATH  Custom output directory
 #   --max-retries N     Max retry attempts per scene on failure (default: 5)
 #
@@ -29,13 +30,18 @@
 #   # With custom output path and skip existing
 #   ./scripts/run_parallel_all.sh LayoutVLM 4 --output-path /path/to/output --skip-existing
 #
+#   # With custom input and output paths
+#   ./scripts/run_parallel_all.sh LayoutVLM 4 \
+#       --input-path /path/to/custom/input/MethodName \
+#       --output-path /path/to/output
+#
 #   # Full example with metrics
 #   ./scripts/run_parallel_all.sh SceneWeaver 8 \
 #       'evaluation_plan.evaluation_cfg.metrics=[CollisionMetric,StaticEquilibriumMetricCoACD]' \
 #       'evaluation_plan.evaluation_cfg.use_empty_matching_result=True'
 #
 # This script:
-#   1. Scans input/<method>/ for all scene_*.json files
+#   1. Scans input/<method>/ (or --input-path) for all scene_*.json files
 #   2. Extracts scene IDs and splits them evenly across workers
 #   3. Each worker runs a subset of scenes in parallel
 #
@@ -60,9 +66,10 @@ fi
 
 shift 2  # Remove first two args, rest are passed to main.py
 
-# Check for --skip-existing, --output-path, and --max-retries flags
+# Check for --skip-existing, --output-path, --input-path, and --max-retries flags
 SKIP_EXISTING=false
 OUTPUT_PATH=""
+INPUT_PATH=""
 MAX_RETRIES=5
 EXTRA_ARGS=()
 while [ $# -gt 0 ]; do
@@ -77,6 +84,15 @@ while [ $# -gt 0 ]; do
                 shift 2
             else
                 echo "Error: --output-path requires a path argument"
+                exit 1
+            fi
+            ;;
+        --input-path)
+            if [ -n "$2" ] && [ "${2:0:1}" != "-" ]; then
+                INPUT_PATH="$2"
+                shift 2
+            else
+                echo "Error: --input-path requires a path argument"
                 exit 1
             fi
             ;;
@@ -142,7 +158,11 @@ STATE_DIR="${LOG_DIR}/state"
 mkdir -p "$LOG_DIR" "$STATE_DIR"
 
 # Find all scene IDs from input directory
-INPUT_DIR="input/$METHOD"
+if [ -n "$INPUT_PATH" ]; then
+    INPUT_DIR="$INPUT_PATH"
+else
+    INPUT_DIR="input/$METHOD"
+fi
 if [ ! -d "$INPUT_DIR" ]; then
     echo "Error: Input directory not found: $INPUT_DIR"
     exit 1
@@ -167,7 +187,13 @@ TOTAL_SCENES=${#SCENE_ARRAY[@]}
 # Filter out scenes with complete evaluations if --skip-existing is set
 if [ "$SKIP_EXISTING" = true ]; then
     OUTPUT_DIR=$(get_output_dir "$@")
-    echo "Checking for existing evals in: $OUTPUT_DIR"
+    # Use the method name from INPUT_PATH if provided, else use METHOD
+    if [ -n "$INPUT_PATH" ]; then
+        EVAL_METHOD="$(basename "$INPUT_PATH")"
+    else
+        EVAL_METHOD="$METHOD"
+    fi
+    echo "Checking for existing evals in: $OUTPUT_DIR/$EVAL_METHOD"
     FILTERED_SCENES=()
     SKIPPED_COUNT=0
     CHECKED=0
@@ -177,7 +203,7 @@ if [ "$SKIP_EXISTING" = true ]; then
         if [ $((CHECKED % 20)) -eq 0 ]; then
             echo "  Checked $CHECKED/$TOTAL_SCENES scenes..."
         fi
-        if is_eval_complete "$OUTPUT_DIR" "$METHOD" "$scene_id"; then
+        if is_eval_complete "$OUTPUT_DIR" "$EVAL_METHOD" "$scene_id"; then
             ((SKIPPED_COUNT++)) || true  # Prevent set -e from triggering on 0
         else
             FILTERED_SCENES+=("$scene_id")
@@ -266,6 +292,16 @@ for ((i=0; i<TOTAL_SCENES; i+=SCENES_PER_WORKER)); do
 
     echo "Starting worker $WORKER_COUNT: scenes [$WORKER_SCENES]"
 
+    # Build input path args if custom path provided
+    INPUT_ARGS=""
+    if [ -n "$INPUT_PATH" ]; then
+        INPUT_ROOT_DIR="$(dirname "$INPUT_PATH")"
+        INPUT_METHOD="$(basename "$INPUT_PATH")"
+        INPUT_ARGS="evaluation_plan.input_cfg.root_dir=$INPUT_ROOT_DIR evaluation_plan.input_cfg.scene_methods=[$INPUT_METHOD]"
+    else
+        INPUT_ARGS="evaluation_plan.input_cfg.scene_methods=[$METHOD]"
+    fi
+
     # Build output path argument if set
     OUTPUT_PATH_ARG=""
     if [ -n "$OUTPUT_PATH" ]; then
@@ -278,7 +314,7 @@ for ((i=0; i<TOTAL_SCENES; i+=SCENES_PER_WORKER)); do
         "$WORKER_SCENES" \
         "$STATE_DIR" \
         "$MAX_RETRIES" \
-        "evaluation_plan.input_cfg.scene_methods=[$METHOD]" \
+        $INPUT_ARGS \
         $OUTPUT_PATH_ARG \
         "$@" \
         > "${LOG_DIR}/worker_${WORKER_COUNT}.log" 2>&1 &
