@@ -46,7 +46,7 @@ input_cfg:
   scene_mode: range # all, range, list
   scene_range: [0, 210] # Left inclusive, right exclusive
   scene_list: []
-  annotation_file: ./input/annotations.csv
+  annotation_file: /home/ubuntu/efs/nicholas/scene-agent-eval-scenes/annotations.csv
 
 render_cfg:
   normal_render_tasks:

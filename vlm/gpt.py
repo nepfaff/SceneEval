@@ -25,7 +25,7 @@ class GPTConfig:
         seed: the seed passed to the API
     """
 
-    model_name: str = "gpt-4o-2024-08-06"
+    model_name: str = "gpt-5.2"  # upgraded from gpt-4o-2024-08-06
     prompt_file: str = "./llm/prompts.yaml"
     seed: int | None = None
 

@@ -1,12 +1,62 @@
 from dataclasses import dataclass
 from warnings import warn
 import json
-import numpy as np
+import re
 from pydantic import BaseModel
 from scenes import Scene, Annotation
 from vlm import BaseVLM
 from .base import BaseMetric, MetricResult
 from .registry import register_vlm_metric
+
+
+def extract_object_name(obj_id: str, obj_description: str | None = None) -> str:
+    """
+    Extract a human-readable object name from the object ID or description.
+
+    Priority:
+    1. Use obj_description if available (from asset retriever)
+    2. Extract semantic name from model_id in obj_id (e.g., "scene-agent_coffee_table_0" -> "coffee_table")
+
+    Args:
+        obj_id: Object ID in format "idx{index}_{model_id}"
+        obj_description: Optional human-readable description from scene
+
+    Returns:
+        Human-readable object name
+    """
+    # If we have a description, use it (but truncate if too long)
+    if obj_description:
+        # Descriptions may include " - instance N" suffix, remove it
+        name = re.sub(r'\s*-\s*instance\s*\d+$', '', obj_description)
+        return name.strip()
+
+    # Otherwise, extract from model_id in the object ID
+    # Object ID format: "idx{index}_{model_id}"
+    # model_id examples:
+    #   - scene-agent_coffee_table_0
+    #   - sceneweaver_chair_2
+    #   - 3dfModel_xxxxx
+
+    # Remove the "idx{N}_" prefix
+    match = re.match(r'idx\d+_(.+)', obj_id)
+    if match:
+        model_id = match.group(1)
+    else:
+        model_id = obj_id
+
+    # Extract category from model_id
+    # Common prefixes: scene-agent_, sceneweaver_, sw., 3dfModel_, idesign_
+    prefixes = ['scene-agent_', 'sceneweaver_', 'sw.', '3dfModel_', 'idesign_']
+    for prefix in prefixes:
+        if model_id.startswith(prefix):
+            model_id = model_id[len(prefix):]
+            break
+
+    # Remove trailing instance number (e.g., "_0", "_1")
+    model_id = re.sub(r'_\d+$', '', model_id)
+
+    # Convert underscores to spaces for readability
+    return model_id.replace('_', ' ')
 
 # ----------------------------------------------------------------------------------------
 
@@ -100,20 +150,14 @@ class ObjMatching(BaseMetric):
             # Start with a clean VLM state
             self.vlm.reset()
 
-            # Get object dimensions (XYZ extents in meters)
-            obj_extents = self.scene.get_default_pose_obj_bbox_extents(obj_id)
+            # Extract object name for VLM hint
+            obj_description = self.scene.obj_descriptions.get(obj_id, None)
+            object_name = extract_object_name(obj_id, obj_description)
 
-            # Apply the object's scale to the default pose extents
-            obj_matrix = np.asarray(self.scene.get_obj_matrix(obj_id))
-            obj_scale = np.array([np.linalg.norm(obj_matrix[:3, i]) for i in range(3)])
-            obj_extents = obj_extents * obj_scale
-
-            dimensions_str = f"Width: {obj_extents[0]*100:.1f}cm, Depth: {obj_extents[1]*100:.1f}cm, Height: {obj_extents[2]*100:.1f}cm"
-
-            # Prepare prompt info with dimensions
+            # Prepare prompt info with object name hint
             prompt_info = {
                 "target_categories": json.dumps(self.target_categories),
-                "object_dimensions": dimensions_str
+                "object_name": object_name
             }
 
             # Get the front image of the object
