@@ -62,6 +62,20 @@ models:
       - layoutvlm_objathor
     hdri_strength: 0.4  # Tested scenes 0,1
 
+  LayoutVLM_Curated_Fixed:
+    input_dir_name: LayoutVLM_Curated_Fixed
+    output_dir_name: ${models.LayoutVLM_Curated_Fixed.input_dir_name}
+    asset_datasets:
+      - layoutvlm_objathor
+    hdri_strength: 0.4
+
+  LayoutVLM_Objaverse_Fixed:
+    input_dir_name: LayoutVLM_Objaverse_Fixed
+    output_dir_name: ${models.LayoutVLM_Objaverse_Fixed.input_dir_name}
+    asset_datasets:
+      - layoutvlm_objathor
+    hdri_strength: 0.4
+
   SceneWeaver:
     input_dir_name: SceneWeaver
     output_dir_name: ${models.SceneWeaver.input_dir_name}
