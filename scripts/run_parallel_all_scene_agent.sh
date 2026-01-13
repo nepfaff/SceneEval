@@ -4,9 +4,10 @@
 # Usage: ./scripts/run_parallel_all_scene_agent.sh <num_workers> [input_path] [--output-path <path>] [--skip-existing] [--max-retries <n>] [extra_args...]
 #
 # Options:
-#   --skip-existing     Skip scenes that already have complete evaluations
-#   --output-path PATH  Custom output directory
-#   --max-retries N     Max retry attempts per scene on failure (default: 5)
+#   --skip-existing       Skip scenes that already have complete evaluations
+#   --output-path PATH    Custom output directory
+#   --max-retries N       Max retry attempts per scene on failure (default: 5)
+#   --recompute-semantic  Recompute only VLM-based semantic metrics, preserving Drake metrics
 #
 # Features:
 #   - Automatic segfault protection: each scene is processed individually
@@ -66,11 +67,12 @@ fi
 
 shift 1  # Remove num_workers arg
 
-# Check for --skip-existing, --output-path, and --max-retries flags, and input path
+# Check for --skip-existing, --output-path, --max-retries, --recompute-semantic flags, and input path
 SKIP_EXISTING=false
 OUTPUT_PATH=""
 INPUT_PATH=""
 MAX_RETRIES=5
+RECOMPUTE_SEMANTIC=false
 EXTRA_ARGS=()
 
 # First pass: check if the first non-flag arg is an input path (directory)
@@ -110,6 +112,10 @@ while [ $# -gt 0 ]; do
                 echo "Error: --max-retries requires a number"
                 exit 1
             fi
+            ;;
+        --recompute-semantic)
+            RECOMPUTE_SEMANTIC=true
+            shift
             ;;
         *)
             # Skip input path if already captured, otherwise add to extra args
@@ -319,13 +325,20 @@ for ((i=0; i<TOTAL_SCENES; i+=SCENES_PER_WORKER)); do
         OUTPUT_PATH_ARG="evaluation_plan.evaluation_cfg.output_dir=$OUTPUT_PATH"
     fi
 
+    # Determine evaluation plan to use
+    if [ "$RECOMPUTE_SEMANTIC" = true ]; then
+        EVAL_PLAN_ARG="evaluation_plan=recompute_vlm_sceneagent_plan"
+    else
+        EVAL_PLAN_ARG="evaluation_plan=sceneagent_plan"
+    fi
+
     # Use fault-tolerant worker wrapper that processes scenes one-by-one with retry logic
     "${SCRIPT_DIR}/run_worker_with_restart.sh" \
         "$WORKER_COUNT" \
         "$WORKER_SCENES" \
         "$STATE_DIR" \
         "$MAX_RETRIES" \
-        evaluation_plan=sceneagent_plan \
+        $EVAL_PLAN_ARG \
         $INPUT_ARGS \
         $OUTPUT_PATH_ARG \
         "$@" \

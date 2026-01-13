@@ -1,0 +1,53 @@
+# Recompute VLM-based metrics only for SceneAgent, preserving existing Drake/physics metrics
+# Use with: python main.py evaluation_plan=recompute_vlm_sceneagent_plan
+#
+# This config is for rerunning VLM-based semantic metrics after improvements
+# to the object matching system (e.g., better prompts, updated VLM).
+#
+# Key behaviors:
+#   - Forces new object matching (use_existing_matching: False)
+#   - Preserves existing non-VLM metrics (Drake, Collision, etc.)
+#   - Writes combined results to eval_result_v2.json (original unchanged)
+#   - Writes new matching to obj_matching_result_v2.json
+#   - Does NOT re-save blend files or re-render
+
+evaluation_cfg:
+  metrics:
+    # VLM-based metrics to recompute:
+    - ObjCountMetric
+    - ObjAttributeMetric
+    - ObjObjRelationshipMetric
+    - ObjArchRelationshipMetric
+    - AccessibilityMetric
+    # NOTE: SupportMetric dropped - Drake stability metric is superior
+  output_dir: ./output_eval
+  skip_completed: False  # Don't skip - we want to recompute
+  save_blend_file: False  # Don't re-save blend files
+  save_trimesh_glb: False
+  vlm: GPT
+  use_existing_matching: False  # FORCE new matching with improved prompt
+  use_empty_matching_result: False
+  support_metric_use_existing_support_type_assessment: False
+  no_eval: False
+  verbose: False
+  # Selective metric recomputation options:
+  preserve_existing_metrics: True  # Keep Drake metrics from eval_result.json
+  output_suffix: "v2"  # Write combined results to eval_result_v2.json (original unchanged)
+
+input_cfg:
+  root_dir: ./input
+  scene_methods:
+    - SceneAgent
+  method_use_simple_architecture: []
+  scene_mode: range
+  scene_range: [0, 210]
+  scene_list: []
+  annotation_file: /home/ubuntu/efs/nicholas/scene-agent-eval-scenes/annotations.csv
+
+render_cfg:
+  normal_render_tasks: []  # No new rendering needed
+  semantic_render_tasks: null
+  semantic_color_reference: null
+  export_web_glb: false
+  web_glb_max_texture_size: 512
+  hdri_path: null

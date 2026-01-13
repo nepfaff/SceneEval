@@ -54,6 +54,9 @@ class EvaluationConfig:
     support_metric_use_existing_support_type_assessment: bool
     no_eval: bool
     verbose: bool
+    # For selective metric recomputation:
+    preserve_existing_metrics: bool = False  # Load non-recomputed metrics from existing eval_result.json
+    output_suffix: str = ""                  # e.g., "v2" → eval_result_v2.json (original unchanged)
 
 @dataclass
 class InputConfig:
@@ -1018,25 +1021,31 @@ def _export_web_glb_from_current_scene(
 def _get_obj_matching(scene: Scene,
                       annotation: Annotation,
                       vlm: BaseVLM,
-                      use_existing_matching: bool) -> ObjMatchingResults:
+                      use_existing_matching: bool,
+                      output_suffix: str = "") -> ObjMatchingResults:
     """
     Get object matching results for the scene and annotation using a VLM.
-    
+
     Args:
         scene: the scene to evaluate
         annotation: the annotation for the scene
         vlm: the VLM to use for object matching
         use_existing_matching: whether to use existing matching results if available
-        
+        output_suffix: suffix for output file (e.g., "v2" → obj_matching_result_v2.json)
+
     Returns:
         matching_result: the object matching results
     """
-    
+
     # Match object descriptions to target categories in annotation - used by other metrics
-    matching_result_file = scene.output_dir / f"obj_matching_result.json"
-    
+    # When output_suffix is set, we read from the suffixed file if use_existing_matching
+    if output_suffix:
+        matching_result_file = scene.output_dir / f"obj_matching_result_{output_suffix}.json"
+    else:
+        matching_result_file = scene.output_dir / f"obj_matching_result.json"
+
     if use_existing_matching and matching_result_file.exists():
-        print("\nUsing existing object matching result...")
+        print(f"\nUsing existing object matching result from: {matching_result_file}")
         with open(matching_result_file, "r") as f:
             matching_result = ObjMatchingResults.from_dict(json.load(f))
         print("Existing object matching loaded.\n")
@@ -1045,13 +1054,13 @@ def _get_obj_matching(scene: Scene,
         obj_matching = ObjMatching(scene, annotation, vlm)
         obj_matching_result = obj_matching.run()
         matching_result: ObjMatchingResults = obj_matching_result.data["matching_result"]
-        
-        # Save the matching result
+
+        # Save the matching result to the appropriate file
         with open(matching_result_file, "w") as f:
             json.dump(matching_result.to_dict(), f, indent=4)
-    
+
         print(f"New object matching done. Saved to: {matching_result_file}\n")
-        
+
     return matching_result
 
 # ========================================================================================
@@ -1262,11 +1271,16 @@ def main(cfg: DictConfig) -> None:
 
                 # Use empty matching result if configured
                 # Useful if only running metrics that do not require object matching (e.g., collision)
+                output_suffix = evaluation_plan.evaluation_cfg.output_suffix
                 if evaluation_plan.evaluation_cfg.use_empty_matching_result:
                     print("Using empty matching result as configured.")
                     matching_result = ObjMatchingResults(per_category={}, not_matched_objs=[], actual_categories={})
                 else:
-                    matching_result = _get_obj_matching(scene, annotation, vlm, evaluation_plan.evaluation_cfg.use_existing_matching)
+                    matching_result = _get_obj_matching(
+                        scene, annotation, vlm,
+                        evaluation_plan.evaluation_cfg.use_existing_matching,
+                        output_suffix=output_suffix
+                    )
 
                 print("Using object matching:")
                 for category, obj_ids in matching_result.per_category.items():
@@ -1289,7 +1303,30 @@ def main(cfg: DictConfig) -> None:
                 if evaluation_plan.evaluation_cfg.no_eval:
                     continue
 
-                # Initialize output json
+                # ---------------------------------------------------
+                # Handle existing results preservation for selective metric recomputation
+                # ---------------------------------------------------
+                existing_results = {}
+                eval_result_file = output_dir / "eval_result.json"
+
+                if evaluation_plan.evaluation_cfg.preserve_existing_metrics and eval_result_file.exists():
+                    print(f"\nPreserving existing metrics from: {eval_result_file}")
+                    with open(eval_result_file, "r") as f:
+                        existing_data = json.load(f)
+
+                    # Preserve metrics NOT in the current run's list
+                    for metric_name, result in existing_data.get("results", {}).items():
+                        if metric_name not in metrics_to_run:
+                            existing_results[metric_name] = result
+                            print(f"  Preserving: {metric_name}")
+
+                    if existing_results:
+                        print(f"Preserved {len(existing_results)} existing metrics.\n")
+                    else:
+                        print("No existing metrics to preserve (all being recomputed).\n")
+
+                # Initialize output json with preserved results
+                all_metrics = list(set(metrics_to_run) | set(existing_results.keys()))
                 output_json = {
                     "method": method,
                     "scene_id": scene_file_id,
@@ -1298,8 +1335,8 @@ def main(cfg: DictConfig) -> None:
                     "object_descriptions": [scene.obj_descriptions[obj_id] for obj_id in scene.get_obj_ids()],
                     "object_matching_per_category": matching_result.per_category,
                     "not_matched_objects": matching_result.not_matched_objs,
-                    "metrics": metrics_to_run,
-                    "results": {}
+                    "metrics": all_metrics,
+                    "results": existing_results  # Start with preserved results
                 }
 
                 # Run metrics
@@ -1334,8 +1371,11 @@ def main(cfg: DictConfig) -> None:
 
                     log_memory(f"After metric {metric_name}")
 
-                    # Save results up to this point
-                    output_file = output_dir / f"eval_result.json"
+                    # Save results up to this point (use output_suffix if set)
+                    if output_suffix:
+                        output_file = output_dir / f"eval_result_{output_suffix}.json"
+                    else:
+                        output_file = output_dir / f"eval_result.json"
                     with open(output_file, "w") as f:
                         json.dump(output_json, f, indent=4)
 

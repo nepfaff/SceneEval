@@ -4,10 +4,11 @@
 # Usage: ./scripts/run_parallel_all.sh <method> <num_workers> [--input-path <path>] [--output-path <path>] [--skip-existing] [--max-retries <n>] [extra_args...]
 #
 # Options:
-#   --skip-existing     Skip scenes that already have complete evaluations
-#   --input-path PATH   Custom input directory (default: input/<method>)
-#   --output-path PATH  Custom output directory
-#   --max-retries N     Max retry attempts per scene on failure (default: 5)
+#   --skip-existing       Skip scenes that already have complete evaluations
+#   --input-path PATH     Custom input directory (default: input/<method>)
+#   --output-path PATH    Custom output directory
+#   --max-retries N       Max retry attempts per scene on failure (default: 5)
+#   --recompute-semantic  Recompute only VLM-based semantic metrics, preserving Drake metrics
 #
 # Features:
 #   - Automatic segfault protection: each scene is processed individually
@@ -66,11 +67,12 @@ fi
 
 shift 2  # Remove first two args, rest are passed to main.py
 
-# Check for --skip-existing, --output-path, --input-path, and --max-retries flags
+# Check for --skip-existing, --output-path, --input-path, --max-retries, and --recompute-semantic flags
 SKIP_EXISTING=false
 OUTPUT_PATH=""
 INPUT_PATH=""
 MAX_RETRIES=5
+RECOMPUTE_SEMANTIC=false
 EXTRA_ARGS=()
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -104,6 +106,10 @@ while [ $# -gt 0 ]; do
                 echo "Error: --max-retries requires a number"
                 exit 1
             fi
+            ;;
+        --recompute-semantic)
+            RECOMPUTE_SEMANTIC=true
+            shift
             ;;
         *)
             EXTRA_ARGS+=("$1")
@@ -308,12 +314,19 @@ for ((i=0; i<TOTAL_SCENES; i+=SCENES_PER_WORKER)); do
         OUTPUT_PATH_ARG="evaluation_plan.evaluation_cfg.output_dir=$OUTPUT_PATH"
     fi
 
+    # Build recompute-semantic argument if set
+    RECOMPUTE_SEMANTIC_ARG=""
+    if [ "$RECOMPUTE_SEMANTIC" = true ]; then
+        RECOMPUTE_SEMANTIC_ARG="evaluation_plan=recompute_vlm_plan"
+    fi
+
     # Use fault-tolerant worker wrapper that processes scenes one-by-one with retry logic
     "${SCRIPT_DIR}/run_worker_with_restart.sh" \
         "$WORKER_COUNT" \
         "$WORKER_SCENES" \
         "$STATE_DIR" \
         "$MAX_RETRIES" \
+        $RECOMPUTE_SEMANTIC_ARG \
         $INPUT_ARGS \
         $OUTPUT_PATH_ARG \
         "$@" \
