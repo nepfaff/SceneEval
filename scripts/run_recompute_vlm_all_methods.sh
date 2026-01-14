@@ -150,6 +150,21 @@ echo "Max retries: $MAX_RETRIES"
 echo "Skip existing: $SKIP_EXISTING"
 echo "Dry run: $DRY_RUN"
 echo ""
+# Detect and log GPU count for worker distribution
+GPU_COUNT=$(nvidia-smi --query-gpu=index --format=csv,noheader 2>/dev/null | wc -l)
+GPU_COUNT=${GPU_COUNT:-1}
+BWRAP_AVAILABLE="no"
+if command -v bwrap &> /dev/null; then
+    BWRAP_AVAILABLE="yes"
+fi
+echo "GPUs available: $GPU_COUNT"
+echo "Bubblewrap available: $BWRAP_AVAILABLE"
+if [ "$BWRAP_AVAILABLE" = "yes" ]; then
+    echo "  -> Workers will be distributed across GPUs via bubblewrap"
+else
+    echo "  -> WARNING: All workers will share GPU 0 (install bubblewrap for distribution)"
+fi
+echo ""
 echo "Input parent: $INPUT_PARENT"
 echo "Output parent: $OUTPUT_PARENT"
 echo ""

@@ -70,6 +70,45 @@ get_output_dir_for_method() {
     return 0
 }
 
+# Build bubblewrap command prefix for GPU isolation
+# This function sets the BWRAP_PREFIX array variable
+# Args: $1 = gpu_id
+build_bwrap_prefix() {
+    local gpu_id=$1
+    local home_dir="$HOME"
+
+    BWRAP_PREFIX=(
+        "bwrap"
+        "--die-with-parent"
+        "--ro-bind" "/" "/"
+        "--bind" "$home_dir" "$home_dir"
+        "--bind" "/tmp" "/tmp"
+        "--bind" "/dev/shm" "/dev/shm"
+        "--proc" "/proc"
+        "--dev-bind" "/dev/urandom" "/dev/urandom"
+        "--dev-bind" "/dev/null" "/dev/null"
+    )
+
+    # Bind EFS mount as writable (symlinked from ~/efs to /mnt/fs1/efs)
+    if [ -d "/mnt/fs1/efs" ]; then
+        BWRAP_PREFIX+=("--bind" "/mnt/fs1/efs" "/mnt/fs1/efs")
+    fi
+
+    # Bind NVIDIA devices that exist
+    for dev in /dev/nvidiactl /dev/nvidia-uvm /dev/nvidia-uvm-tools "/dev/nvidia${gpu_id}"; do
+        if [ -e "$dev" ]; then
+            BWRAP_PREFIX+=("--dev-bind" "$dev" "$dev")
+        fi
+    done
+
+    # Bind DRI for Vulkan
+    if [ -d "/dev/dri" ]; then
+        BWRAP_PREFIX+=("--dev-bind" "/dev/dri" "/dev/dri")
+    fi
+
+    BWRAP_PREFIX+=("--")
+}
+
 if [ -z "$WORKER_ID" ] || [ -z "$SCENE_SPECS_STR" ] || [ -z "$STATE_DIR" ]; then
     echo "Usage: $0 <worker_id> <scene_specs> <state_dir> <max_retries>"
     echo "Example: $0 0 'SceneAgent:SceneAgent:1,LayoutVLM:LayoutVLM:5' ./logs/state 3"
@@ -154,6 +193,22 @@ echo "[Worker $WORKER_ID] Starting VLM recomputation"
 echo "[Worker $WORKER_ID] Input parent: $INPUT_PARENT"
 echo "[Worker $WORKER_ID] Output parent: $OUTPUT_PARENT"
 echo "[Worker $WORKER_ID] Max retries per scene: $MAX_RETRIES"
+
+# GPU Distribution - assign worker to GPU based on worker ID
+# EEVEE uses Vulkan which ignores CUDA_VISIBLE_DEVICES, so we use bubblewrap
+# to hide other GPU devices at the filesystem level
+GPU_COUNT=$(nvidia-smi --query-gpu=index --format=csv,noheader 2>/dev/null | wc -l)
+GPU_COUNT=${GPU_COUNT:-1}
+ASSIGNED_GPU=$((WORKER_ID % GPU_COUNT))
+
+USE_BWRAP=""
+if command -v bwrap &> /dev/null; then
+    USE_BWRAP="1"
+    build_bwrap_prefix "$ASSIGNED_GPU"
+    echo "[Worker $WORKER_ID] Assigned to GPU $ASSIGNED_GPU (of $GPU_COUNT) via bubblewrap"
+else
+    echo "[Worker $WORKER_ID] WARNING: bwrap not available, using shared GPU"
+fi
 echo ""
 
 # Track retry attempts per scene spec (in case of requeue)
@@ -184,15 +239,23 @@ while [ -n "$SCENE_SPEC" ]; do
 
     # Run single scene VLM recomputation
     # Uses recompute_vlm_plan which has preserve_existing_metrics=True and output_suffix="v2"
-    set +e
-    python main.py \
-        evaluation_plan=recompute_vlm_plan \
-        "evaluation_plan.input_cfg.root_dir=${INPUT_PARENT}" \
-        "evaluation_plan.input_cfg.scene_methods=[${INPUT_NAME}]" \
-        "evaluation_plan.input_cfg.scene_mode=list" \
-        "evaluation_plan.input_cfg.scene_list=[${SCENE_ID}]" \
-        "evaluation_plan.evaluation_cfg.output_dir=${EFFECTIVE_OUTPUT_DIR}" \
+    PYTHON_CMD=(
+        python main.py
+        evaluation_plan=recompute_vlm_plan
+        "evaluation_plan.input_cfg.root_dir=${INPUT_PARENT}"
+        "evaluation_plan.input_cfg.scene_methods=[${INPUT_NAME}]"
+        "evaluation_plan.input_cfg.scene_mode=list"
+        "evaluation_plan.input_cfg.scene_list=[${SCENE_ID}]"
+        "evaluation_plan.evaluation_cfg.output_dir=${EFFECTIVE_OUTPUT_DIR}"
         "assets.scene_agent.dataset_root_path=${INPUT_PARENT}/${INPUT_NAME}"
+    )
+
+    set +e
+    if [ -n "$USE_BWRAP" ]; then
+        "${BWRAP_PREFIX[@]}" "${PYTHON_CMD[@]}"
+    else
+        "${PYTHON_CMD[@]}"
+    fi
     EXIT_CODE=$?
     set -e
 
