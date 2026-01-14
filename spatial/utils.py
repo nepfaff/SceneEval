@@ -43,7 +43,7 @@ def _quadric_decimation_fallback(mesh: trimesh.Trimesh, target_vertices: int) ->
     try:
         # Calculate face count target (roughly 2 faces per vertex for manifold meshes)
         target_faces = target_vertices * 2
-        simplified = mesh.simplify_quadric_decimation(target_faces)
+        simplified = mesh.simplify_quadric_decimation(face_count=target_faces)
         logger.info(
             f"Quadric decimation fallback: {len(mesh.vertices)} -> {len(simplified.vertices)} vertices"
         )

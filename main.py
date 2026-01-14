@@ -1265,7 +1265,10 @@ def main(cfg: DictConfig) -> None:
 
                 # Get the corresponding annotation
                 scene_file_id = scene_state.name.split("_")[-1]
-                annotation = annotations[int(scene_file_id)]
+                annotation_idx = int(scene_file_id)
+                if annotation_idx >= 500:
+                    annotation_idx -= 500
+                annotation = annotations[annotation_idx]
 
                 # ---------------------------------------------------
 
