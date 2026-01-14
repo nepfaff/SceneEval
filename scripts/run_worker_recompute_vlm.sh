@@ -18,6 +18,18 @@
 
 set -o pipefail
 
+# Get the script directory and project root
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+
+# Activate virtual environment if it exists
+if [ -f "$PROJECT_ROOT/.venv/bin/activate" ]; then
+    source "$PROJECT_ROOT/.venv/bin/activate"
+fi
+
+# Change to project directory for hydra config resolution
+cd "$PROJECT_ROOT"
+
 WORKER_ID=$1
 SCENE_SPECS_STR=$2
 STATE_DIR=$3
