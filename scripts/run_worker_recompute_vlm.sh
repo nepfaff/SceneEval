@@ -250,6 +250,11 @@ while [ -n "$SCENE_SPEC" ]; do
         "assets.scene_agent.dataset_root_path=${INPUT_PARENT}/${INPUT_NAME}"
     )
 
+    # Add method-specific asset paths
+    if [[ "$INPUT_NAME" == "SceneWeaver" ]]; then
+        PYTHON_CMD+=("assets.sceneweaver.dataset_root_path=${INPUT_PARENT}/${INPUT_NAME}")
+    fi
+
     set +e
     if [ -n "$USE_BWRAP" ]; then
         "${BWRAP_PREFIX[@]}" "${PYTHON_CMD[@]}"
