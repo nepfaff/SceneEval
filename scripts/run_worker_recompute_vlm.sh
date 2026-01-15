@@ -253,6 +253,7 @@ while [ -n "$SCENE_SPEC" ]; do
     # Add method-specific asset paths
     if [[ "$INPUT_NAME" == "SceneWeaver" ]]; then
         PYTHON_CMD+=("assets.sceneweaver.dataset_root_path=${INPUT_PARENT}/${INPUT_NAME}")
+        PYTHON_CMD+=("assets.sw.dataset_root_path=${INPUT_PARENT}/${INPUT_NAME}")  # sw is short alias used in model IDs
     fi
 
     set +e
