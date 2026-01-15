@@ -36,6 +36,7 @@ from assets import Retriever
 from semantic_colors import apply_semantic_colors
 from vlm import VLMRegistry, BaseVLM
 from parallel.worker import FileLoggingContext
+from spatial.utils import clear_downsample_cache
 
 load_dotenv()
 
@@ -1154,8 +1155,11 @@ def main(cfg: DictConfig) -> None:
             print(f"--- {method} ({i+1}/{len(method_scene_files)}) --- {method_scene_file}\n")
             print(f"*** Load scene with simple architecture? -> {scene_cfg.use_simple_architecture} ***\n")
 
+            # Clear mesh downsampling cache between scenes to prevent memory buildup
+            clear_downsample_cache()
+
             # ---------------------------------------------------
-            
+
             # Load scene state, if it fails, load an empty scene
             try:
                 scene_state = SceneState(method_scene_file)
