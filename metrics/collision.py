@@ -7,6 +7,26 @@ from .registry import register_non_vlm_metric
 
 # ----------------------------------------------------------------------------------------
 
+
+def _aabb_overlap(bounds_a: np.ndarray, bounds_b: np.ndarray) -> bool:
+    """Check if two axis-aligned bounding boxes overlap.
+
+    Args:
+        bounds_a: Bounding box as [[min_x, min_y, min_z], [max_x, max_y, max_z]]
+        bounds_b: Bounding box as [[min_x, min_y, min_z], [max_x, max_y, max_z]]
+
+    Returns:
+        True if the bounding boxes overlap, False otherwise.
+    """
+    return (
+        bounds_a[0, 0] <= bounds_b[1, 0] and bounds_a[1, 0] >= bounds_b[0, 0] and
+        bounds_a[0, 1] <= bounds_b[1, 1] and bounds_a[1, 1] >= bounds_b[0, 1] and
+        bounds_a[0, 2] <= bounds_b[1, 2] and bounds_a[1, 2] >= bounds_b[0, 2]
+    )
+
+
+# ----------------------------------------------------------------------------------------
+
 @dataclass
 class CollisionMetricConfig:
     """
@@ -105,17 +125,39 @@ class CollisionMetric(BaseMetric):
             }
         for obj_id in non_carpet_obj_ids}
 
+        # Pre-compute bounding boxes for broadphase culling
+        obj_bounds = {}
+        for obj_id in non_carpet_obj_ids:
+            t_obj = self.scene.t_objs[obj_id]
+            obj_bounds[obj_id] = t_obj.bounds  # [[min_x, min_y, min_z], [max_x, max_y, max_z]]
+
+        # Track broadphase statistics
+        total_pairs = len(non_carpet_obj_ids) * (len(non_carpet_obj_ids) - 1) // 2
+        pairs_checked = 0
+        pairs_skipped = 0
+
+        print(f"Broadphase culling enabled: {len(non_carpet_obj_ids)} objects, {total_pairs} potential pairs")
+
         # For each object, check if it is in collision with any other object
         for i, obj_id in enumerate(non_carpet_obj_ids):
-            
+
             # Add the object to the collision manager
             t_obj = self.scene.t_objs[obj_id]
             collision_manager.add_object(obj_id, t_obj)
-            
+            bounds_a = obj_bounds[obj_id]
+
             # Check for collision with each of the other objects
             for other_obj_id in non_carpet_obj_ids[i+1:]:
-                
-                # Add the other object to the collision manager and check for collision
+
+                # Broadphase: skip if AABBs don't overlap
+                bounds_b = obj_bounds[other_obj_id]
+                if not _aabb_overlap(bounds_a, bounds_b):
+                    pairs_skipped += 1
+                    continue
+
+                pairs_checked += 1
+
+                # Narrowphase: detailed collision check
                 t_other_obj = self.scene.t_objs[other_obj_id]
                 in_collision, contact_data = collision_manager.in_collision_single(t_other_obj, return_data=True)
                 
@@ -194,8 +236,13 @@ class CollisionMetric(BaseMetric):
         overall_max_depth = float(max(all_max_depths)) if all_max_depths else 0.0
         overall_mean_depth = float(np.mean(all_max_depths)) if all_max_depths else 0.0
 
+        # Calculate broadphase efficiency
+        broadphase_skip_rate = (pairs_skipped / total_pairs * 100) if total_pairs > 0 else 0.0
+
+        print(f"Broadphase stats: {pairs_skipped}/{total_pairs} pairs skipped ({broadphase_skip_rate:.1f}%), {pairs_checked} pairs checked")
+
         result = MetricResult(
-            message=f"Scene is in collision: {scene_in_collision}, with {num_obj_in_collision}/{len(non_carpet_obj_ids)} objects in collision. Max depth: {overall_max_depth:.4f}m, {num_collision_pairs} collision pairs. ({len(carpet_ids)} carpets, {len(placeholder_ids)} placeholders excluded)",
+            message=f"Scene is in collision: {scene_in_collision}, with {num_obj_in_collision}/{len(non_carpet_obj_ids)} objects in collision. Max depth: {overall_max_depth:.4f}m, {num_collision_pairs} collision pairs. ({len(carpet_ids)} carpets, {len(placeholder_ids)} placeholders excluded). Broadphase: {pairs_skipped}/{total_pairs} skipped ({broadphase_skip_rate:.1f}%)",
             data={
                 "scene_in_collision": scene_in_collision,
                 "num_obj_in_collision": num_obj_in_collision,
@@ -208,6 +255,10 @@ class CollisionMetric(BaseMetric):
                 "num_excluded_carpets": len(carpet_ids),
                 "excluded_placeholder_ids": list(placeholder_ids),
                 "num_excluded_placeholders": len(placeholder_ids),
+                "broadphase_total_pairs": total_pairs,
+                "broadphase_pairs_checked": pairs_checked,
+                "broadphase_pairs_skipped": pairs_skipped,
+                "broadphase_skip_rate": broadphase_skip_rate,
             }
         )
 
