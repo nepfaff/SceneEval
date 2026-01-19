@@ -27,6 +27,12 @@ RESULTS_DIR = Path("/home/ubuntu/efs/nicholas/scene-agent-eval-scenes/SceneEval_
 ANNOTATIONS_PATH = Path("/home/ubuntu/efs/nicholas/scene-agent-eval-scenes/annotations.csv")
 OUTPUT_PATH = Path("/home/ubuntu/SceneEval/results_SceneEval.md")
 
+# Path to scene-agent converted scenes (contains sdfPath with object types)
+SCENEAGENT_CONVERTED_DIR = Path("/home/ubuntu/efs/nicholas/scene-agent-eval-scenes/SceneEval_converted")
+
+# Object types that should be welded (architectural)
+ARCHITECTURAL_TYPES = {"wall_mounted", "ceiling_mounted"}
+
 # Methods to include and their display order
 # Our method first, then ablations, then baselines
 ROOM_METHODS = [
@@ -430,6 +436,220 @@ def load_scene_equilibrium_stats(eval_path: Path) -> dict:
 
 
 # =============================================================================
+# GROUND TRUTH STABILITY & VLM CLASSIFICATION
+# =============================================================================
+
+# Mapping from VLM support type to GT object type
+VLM_TO_GT_TYPE = {
+    "ground": "furniture",
+    "wall": "wall_mounted",
+    "ceiling": "ceiling_mounted",
+    "object": "manipuland",
+}
+
+# All valid GT object types
+GT_OBJECT_TYPES = {"furniture", "wall_mounted", "ceiling_mounted", "manipuland"}
+
+
+def extract_object_types_from_scene_json(method: str, scene_id: int) -> dict[str, str] | None:
+    """
+    Extract object_type from sdfPath for each object in scene JSON.
+
+    Args:
+        method: Method name (e.g., "SceneAgent_Ours_House")
+        scene_id: Scene ID
+
+    Returns:
+        Dict mapping object_id (e.g., "reception_counter_desk_0") to object_type
+        (e.g., "furniture", "wall_mounted", "ceiling_mounted", "manipuland")
+        Returns None if scene JSON not found.
+    """
+    scene_json = SCENEAGENT_CONVERTED_DIR / method / f"scene_{scene_id}.json"
+    if not scene_json.exists():
+        return None
+
+    with open(scene_json) as f:
+        data = json.load(f)
+
+    object_types = {}
+    for obj in data.get("scene", {}).get("object", []):
+        obj_id = obj.get("id")
+        sdf_path = obj.get("sdfPath", "")
+        if obj_id and sdf_path:
+            # sdfPath format: "{object_type}/sdf/{asset_name}/..."
+            obj_type = sdf_path.split("/")[0]
+            object_types[obj_id] = obj_type
+
+    return object_types
+
+
+def load_vlm_support_types(eval_path: Path) -> dict[str, str] | None:
+    """
+    Load VLM support type classifications from obj_support_type_result.json.
+
+    Returns:
+        Dict mapping full object ID to VLM support type ("ground", "wall", "ceiling", "object")
+        Returns None if file not found.
+    """
+    support_type_path = eval_path.parent / "obj_support_type_result.json"
+    if not support_type_path.exists():
+        return None
+
+    with open(support_type_path) as f:
+        return json.load(f)
+
+
+def compute_ground_truth_stability(
+    eval_path: Path,
+    object_types: dict[str, str],
+    vlm_support_types: dict[str, str]
+) -> dict | None:
+    """
+    Compute stability using ground truth object types and VLM classification accuracy.
+
+    Uses obj_support_type_result.json for VLM classifications (ground/wall/ceiling/object)
+    and compares with GT types from sdfPath (furniture/wall_mounted/ceiling_mounted/manipuland).
+
+    Returns:
+        Dict with stability and classification metrics.
+    """
+    with open(eval_path) as f:
+        data = json.load(f)
+
+    results = data.get("results", {})
+
+    # Find equilibrium metric
+    metric_name = None
+    for name in ["ArchitecturalWeldedEquilibriumMetricSceneAgent",
+                 "ArchitecturalWeldedEquilibriumMetricVHACD",
+                 "ArchitecturalWeldedEquilibriumMetricCoACD"]:
+        if name in results:
+            metric_name = name
+            break
+
+    if metric_name is None:
+        return None
+
+    metric_data = results[metric_name].get("data", {})
+    per_object_results = metric_data.get("per_object_results", {})
+
+    if not per_object_results:
+        return None
+
+    # Current VLM-based counts
+    num_welded = metric_data.get("num_welded_objects", 0)
+    num_stable = metric_data.get("num_stable_objects", 0)
+    num_unstable = metric_data.get("num_unstable_objects", 0)
+
+    # Classification counts
+    total_matched = 0
+    correct_classifications = 0
+    unstable_architectural = 0  # Arch objects misclassified that were unstable
+
+    # Per-class counts for detailed breakdown
+    class_counts = {gt: {"total": 0, "correct": 0} for gt in GT_OBJECT_TYPES}
+
+    # Build reverse lookup for VLM support types (full_id -> support_type)
+    # Need to match per_object_results keys to vlm_support_types keys
+
+    for obj_id, obj_data in per_object_results.items():
+        if not isinstance(obj_data, dict):
+            continue
+
+        # Extract raw object ID from prefixed ID
+        # Two formats:
+        # 1. "idx55_scene-agent.scene_203__painting_0" -> "painting_0" (split on __)
+        # 2. "8_print_0" -> "print_0" (remove leading number prefix)
+        if "__" in obj_id:
+            raw_id = obj_id.split("__")[-1]
+            # For full format, use the original for VLM lookup
+            vlm_lookup_id = obj_id
+        else:
+            match = re.match(r"^\d+_(.+)$", obj_id)
+            raw_id = match.group(1) if match else obj_id
+            vlm_lookup_id = None  # Will need to find matching key
+
+        gt_type = object_types.get(raw_id)
+        if gt_type is None or gt_type not in GT_OBJECT_TYPES:
+            continue
+
+        # Find VLM classification for this object
+        vlm_support = None
+        if vlm_lookup_id and vlm_lookup_id in vlm_support_types:
+            vlm_support = vlm_support_types[vlm_lookup_id]
+        else:
+            # Try to find matching key in vlm_support_types
+            for vlm_id, support in vlm_support_types.items():
+                if vlm_id.endswith(f"__{raw_id}"):
+                    vlm_support = support
+                    break
+
+        if vlm_support is None:
+            continue
+
+        total_matched += 1
+        class_counts[gt_type]["total"] += 1
+
+        # Check if VLM classification matches GT
+        vlm_gt_equivalent = VLM_TO_GT_TYPE.get(vlm_support)
+        if vlm_gt_equivalent == gt_type:
+            correct_classifications += 1
+            class_counts[gt_type]["correct"] += 1
+        else:
+            # Misclassification - check if it affects stability
+            gt_is_arch = gt_type in ARCHITECTURAL_TYPES
+            vlm_thinks_arch = vlm_support in {"wall", "ceiling"}
+
+            if gt_is_arch and not vlm_thinks_arch:
+                # Should have been welded but wasn't
+                if not obj_data.get("stable", True):
+                    unstable_architectural += 1
+
+    # Compute stabilities
+    total_non_welded = num_stable + num_unstable
+    vlm_stability = num_stable / total_non_welded if total_non_welded > 0 else None
+
+    # Ground truth stability
+    gt_stable = num_stable + unstable_architectural
+    gt_unstable = num_unstable - unstable_architectural
+    gt_total = gt_stable + gt_unstable
+    gt_stability = gt_stable / gt_total if gt_total > 0 else None
+
+    # Classification accuracy
+    accuracy = correct_classifications / total_matched if total_matched > 0 else None
+
+    return {
+        "vlm_stability": vlm_stability,
+        "gt_stability": gt_stability,
+        "unstable_architectural": unstable_architectural,
+        "total_matched": total_matched,
+        "correct_classifications": correct_classifications,
+        "accuracy": accuracy,
+        "class_counts": class_counts,
+        "num_welded": num_welded,
+        "num_stable": num_stable,
+        "num_unstable": num_unstable,
+    }
+
+
+def load_scene_ground_truth_stability(method: str, eval_path: Path, scene_id: int) -> dict | None:
+    """Load ground truth stability for a single scene."""
+    # Only compute for SceneAgent methods (they have sdfPath info)
+    if not method.startswith("SceneAgent"):
+        return None
+
+    object_types = extract_object_types_from_scene_json(method, scene_id)
+    if object_types is None:
+        return None
+
+    vlm_support_types = load_vlm_support_types(eval_path)
+    if vlm_support_types is None:
+        return None
+
+    return compute_ground_truth_stability(eval_path, object_types, vlm_support_types)
+
+
+# =============================================================================
 # AGGREGATION
 # =============================================================================
 
@@ -731,9 +951,177 @@ def generate_equilibrium_stats_table(
     return "\n".join(lines)
 
 
+def generate_gt_stability_section(
+    all_gt_stability_data: dict[str, dict[int, dict]],
+    annotations: dict,
+) -> str:
+    """
+    Generate the VLM Support Type Classification Ablation section.
+
+    Shows VLM classification accuracy and its impact on stability.
+    """
+    room_ids = annotations["room_ids"]
+    house_ids = annotations["house_ids"]
+
+    lines = [
+        "## VLM Support Type Classification Ablation",
+        "",
+        "This analysis evaluates VLM support type classification accuracy by comparing",
+        "VLM predictions (`obj_support_type_result.json`) with ground truth from scene-agent's sdfPath.",
+        "",
+        "**Classification Mapping:**",
+        "- VLM `ground` ↔ GT `furniture`",
+        "- VLM `wall` ↔ GT `wall_mounted`",
+        "- VLM `ceiling` ↔ GT `ceiling_mounted`",
+        "- VLM `object` ↔ GT `manipuland`",
+        "",
+    ]
+
+    # Store aggregated data
+    aggregated_data = []
+
+    # Aggregate data by method and scene type
+    for method in sorted(all_gt_stability_data.keys()):
+        method_data = all_gt_stability_data[method]
+
+        for scene_type, scene_ids in [("Room", room_ids), ("House", house_ids)]:
+            valid_ids = set(method_data.keys()) & scene_ids
+            if not valid_ids:
+                continue
+
+            # Aggregate statistics
+            total_vlm_stability = 0.0
+            total_gt_stability = 0.0
+            total_matched = 0
+            total_correct = 0
+            total_unstable_arch = 0
+            count_vlm = 0
+            count_gt = 0
+
+            # Per-class aggregation
+            class_totals = {gt: {"total": 0, "correct": 0} for gt in GT_OBJECT_TYPES}
+
+            for scene_id in valid_ids:
+                stats = method_data[scene_id]
+                if stats.get("vlm_stability") is not None:
+                    total_vlm_stability += stats["vlm_stability"]
+                    count_vlm += 1
+                if stats.get("gt_stability") is not None:
+                    total_gt_stability += stats["gt_stability"]
+                    count_gt += 1
+                total_matched += stats.get("total_matched", 0)
+                total_correct += stats.get("correct_classifications", 0)
+                total_unstable_arch += stats.get("unstable_architectural", 0)
+
+                # Aggregate per-class counts
+                class_counts = stats.get("class_counts", {})
+                for gt_type in GT_OBJECT_TYPES:
+                    if gt_type in class_counts:
+                        class_totals[gt_type]["total"] += class_counts[gt_type].get("total", 0)
+                        class_totals[gt_type]["correct"] += class_counts[gt_type].get("correct", 0)
+
+            # Compute averages
+            avg_vlm = total_vlm_stability / count_vlm if count_vlm > 0 else None
+            avg_gt = total_gt_stability / count_gt if count_gt > 0 else None
+            overall_accuracy = total_correct / total_matched if total_matched > 0 else None
+
+            aggregated_data.append({
+                "method": method,
+                "scene_type": scene_type,
+                "n": len(valid_ids),
+                "vlm_stb": avg_vlm,
+                "gt_stb": avg_gt,
+                "total_matched": total_matched,
+                "total_correct": total_correct,
+                "accuracy": overall_accuracy,
+                "class_totals": class_totals,
+                "unstable_arch": total_unstable_arch,
+            })
+
+    # Build classification accuracy table
+    lines.extend([
+        "### Classification Accuracy",
+        "",
+        "| Method | Scene Type | N | Obj/Scene | Accuracy |",
+        "|:-------|:-----------|--:|----------:|---------:|",
+    ])
+
+    for data in aggregated_data:
+        acc_str = f"{data['accuracy']:.1%}" if data['accuracy'] is not None else "-"
+        obj_per_scene = data['total_matched'] / data['n'] if data['n'] > 0 else 0
+        lines.append(
+            f"| {data['method']} | {data['scene_type']} | {data['n']} | "
+            f"{obj_per_scene:.1f} | {acc_str} |"
+        )
+
+    lines.append("")
+
+    # Build per-class accuracy table
+    lines.extend([
+        "### Per-Class Accuracy",
+        "",
+        "| Method | Scene Type | Furniture | Wall Mounted | Ceiling Mounted | Manipuland |",
+        "|:-------|:-----------|----------:|-------------:|----------------:|-----------:|",
+    ])
+
+    for data in aggregated_data:
+        class_accs = []
+        for gt_type in ["furniture", "wall_mounted", "ceiling_mounted", "manipuland"]:
+            ct = data["class_totals"][gt_type]
+            if ct["total"] > 0:
+                acc = ct["correct"] / ct["total"]
+                class_accs.append(f"{acc:.1%}")
+            else:
+                class_accs.append("-")
+
+        lines.append(
+            f"| {data['method']} | {data['scene_type']} | "
+            f"{class_accs[0]} | {class_accs[1]} | {class_accs[2]} | {class_accs[3]} |"
+        )
+
+    lines.append("")
+
+    # Build stability impact table
+    lines.extend([
+        "### Stability Impact",
+        "",
+        "| Method | Scene Type | N | VLM STB | GT STB | Diff | Unstable Arch |",
+        "|:-------|:-----------|--:|--------:|-------:|-----:|--------------:|",
+    ])
+
+    for data in aggregated_data:
+        vlm_str = f"{data['vlm_stb']:.1%}" if data['vlm_stb'] is not None else "-"
+        gt_str = f"{data['gt_stb']:.1%}" if data['gt_stb'] is not None else "-"
+        if data['vlm_stb'] is not None and data['gt_stb'] is not None:
+            diff_str = f"+{(data['gt_stb'] - data['vlm_stb']):.1%}"
+        else:
+            diff_str = "-"
+
+        lines.append(
+            f"| {data['method']} | {data['scene_type']} | {data['n']} | "
+            f"{vlm_str} | {gt_str} | {diff_str} | {data['unstable_arch']} |"
+        )
+
+    lines.append("")
+
+    # Add interpretation
+    lines.extend([
+        "**Interpretation:**",
+        "",
+        "- **Accuracy**: Fraction of objects where VLM support type matches ground truth",
+        "- **Per-Class Accuracy**: Accuracy broken down by ground truth object type",
+        "- **GT STB**: Stability if architectural objects were correctly identified (oracle)",
+        "- **Unstable Arch**: Misclassified architectural objects that fell (causes STB gap)",
+        "",
+    ])
+
+    return "\n".join(lines)
+
+
 def generate_markdown_report(
     all_method_data: dict[str, dict[int, dict]],
     all_equilibrium_data: dict[str, dict[int, dict]],
+    all_gt_stability_data: dict[str, dict[int, dict]],
     annotations: dict,
 ) -> str:
     """Generate the complete markdown report."""
@@ -831,6 +1219,15 @@ def generate_markdown_report(
     ))
     sections.append("")
 
+    # VLM Support Type Classification Ablation (if GT stability data available)
+    if all_gt_stability_data:
+        sections.append("---")
+        sections.append("")
+        sections.append("# VLM Classification Ablation")
+        sections.append("")
+        sections.append(generate_gt_stability_section(all_gt_stability_data, annotations))
+        sections.append("")
+
     return "\n".join(sections)
 
 
@@ -851,6 +1248,7 @@ def main():
     all_methods = set(ROOM_METHODS) | set(HOUSE_METHODS)
     all_method_data = {}
     all_equilibrium_data = {}
+    all_gt_stability_data = {}
 
     for method in all_methods:
         nested = method in NESTED_METHODS
@@ -862,24 +1260,32 @@ def main():
         if not scene_paths:
             continue
 
-        # Load metrics and equilibrium stats for each scene
+        # Load metrics, equilibrium stats, and ground truth stability for each scene
         method_data = {}
         equilibrium_data = {}
+        gt_stability_data = {}
         for scene_id, eval_path in scene_paths.items():
             try:
                 metrics = load_scene_metrics(eval_path)
                 method_data[scene_id] = metrics
                 eq_stats = load_scene_equilibrium_stats(eval_path)
                 equilibrium_data[scene_id] = eq_stats
+                # Load ground truth stability (only for SceneAgent methods)
+                gt_stats = load_scene_ground_truth_stability(method, eval_path, scene_id)
+                if gt_stats:
+                    gt_stability_data[scene_id] = gt_stats
             except Exception as e:
                 print(f"  Error loading scene {scene_id}: {e}")
 
         all_method_data[method] = method_data
         all_equilibrium_data[method] = equilibrium_data
+        if gt_stability_data:
+            all_gt_stability_data[method] = gt_stability_data
+            print(f"  Loaded GT stability for {len(gt_stability_data)} scenes")
 
     # Generate markdown report
     print(f"\nGenerating markdown report...")
-    report = generate_markdown_report(all_method_data, all_equilibrium_data, annotations)
+    report = generate_markdown_report(all_method_data, all_equilibrium_data, all_gt_stability_data, annotations)
 
     # Write output
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
