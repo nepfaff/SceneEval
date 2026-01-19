@@ -11,10 +11,12 @@ Usage:
 
 import csv
 import json
+import math
 import re
-from collections import defaultdict
+from collections import defaultdict, Counter
 from datetime import datetime
 from pathlib import Path
+from statistics import mean
 
 
 # =============================================================================
@@ -68,6 +70,32 @@ METRICS_CONFIG = [
     ("DrakeCollisionMetricSceneAgent", "frac_obj_in_collision", "DRK", "lower", "Drake Collision"),
     ("ArchitecturalWeldedEquilibriumMetricSceneAgent", "frac_stable", "STB", "higher", "Stability"),
     ("OutOfBoundMetric", "frac_out_of_bound", "OOB", "lower", "Out of Bounds"),
+]
+
+# Equilibrium statistics configuration for detailed displacement/rotation analysis
+# Format: (filter_mode, stat_type, value_type, abbreviation, direction, display_name)
+# filter_mode: "all" = all non-welded objects, "unstable" = only unstable objects
+# stat_type: "mean", "max", "min", "mode"
+# value_type: "disp" = displacement (meters), "rot" = rotation (radians)
+EQUILIBRIUM_STATS_CONFIG = [
+    # All non-welded objects (stable + unstable combined)
+    ("all", "mean", "disp", "AMD", "lower", "All Mean Disp"),
+    ("all", "max", "disp", "AXD", "lower", "All Max Disp"),
+    ("all", "min", "disp", "AND", None, "All Min Disp"),
+    ("all", "mode", "disp", "AOD", None, "All Mode Disp"),
+    ("all", "mean", "rot", "AMR", "lower", "All Mean Rot"),
+    ("all", "max", "rot", "AXR", "lower", "All Max Rot"),
+    ("all", "min", "rot", "ANR", None, "All Min Rot"),
+    ("all", "mode", "rot", "AOR", None, "All Mode Rot"),
+    # Unstable objects only (moving objects)
+    ("unstable", "mean", "disp", "UMD", "lower", "Unstable Mean Disp"),
+    ("unstable", "max", "disp", "UXD", "lower", "Unstable Max Disp"),
+    ("unstable", "min", "disp", "UND", None, "Unstable Min Disp"),
+    ("unstable", "mode", "disp", "UOD", None, "Unstable Mode Disp"),
+    ("unstable", "mean", "rot", "UMR", "lower", "Unstable Mean Rot"),
+    ("unstable", "max", "rot", "UXR", "lower", "Unstable Max Rot"),
+    ("unstable", "min", "rot", "UNR", None, "Unstable Min Rot"),
+    ("unstable", "mode", "rot", "UOR", None, "Unstable Mode Rot"),
 ]
 
 
@@ -253,6 +281,107 @@ def extract_metric_value(results: dict, metric_name: str, field_name: str, num_o
     return None
 
 
+def compute_mode(values: list[float], decimal_places: int = 3) -> float | None:
+    """
+    Compute mode of continuous values by rounding to decimal_places.
+    Returns the most common rounded value, or None if empty.
+    """
+    if not values:
+        return None
+    rounded = [round(v, decimal_places) for v in values]
+    counter = Counter(rounded)
+    mode_value, _ = counter.most_common(1)[0]
+    return mode_value
+
+
+def extract_equilibrium_object_stats(results: dict, filter_mode: str) -> dict | None:
+    """
+    Extract displacement and rotation statistics from equilibrium per_object_results.
+
+    Args:
+        results: The results dict from eval_result_v2.json
+        filter_mode: "all" for all non-welded objects, "unstable" for unstable only
+
+    Returns:
+        Dict with keys: mean_disp, max_disp, min_disp, mode_disp,
+                        mean_rot, max_rot, min_rot, mode_rot
+        Or None if no matching objects found.
+    """
+    # Find the equilibrium metric (try different decomposition methods)
+    metric_name = None
+    for name in ["ArchitecturalWeldedEquilibriumMetricSceneAgent",
+                 "ArchitecturalWeldedEquilibriumMetricVHACD",
+                 "ArchitecturalWeldedEquilibriumMetricCoACD"]:
+        if name in results:
+            metric_name = name
+            break
+
+    if metric_name is None:
+        return None
+
+    metric_data = results[metric_name].get("data", {})
+    per_object_results = metric_data.get("per_object_results", {})
+
+    if not per_object_results:
+        return None
+
+    # Filter objects based on filter_mode
+    displacements = []
+    rotations = []
+
+    for obj_id, obj_data in per_object_results.items():
+        if not isinstance(obj_data, dict):
+            continue
+
+        # Skip welded objects for both modes
+        if obj_data.get("welded", False):
+            continue
+
+        # For "unstable" mode, only include unstable objects
+        if filter_mode == "unstable" and obj_data.get("stable", True):
+            continue
+
+        disp = obj_data.get("displacement")
+        rot = obj_data.get("rotation")
+
+        if disp is not None:
+            displacements.append(disp)
+        if rot is not None:
+            rotations.append(rot)
+
+    # If no matching objects, return None
+    if not displacements and not rotations:
+        return None
+
+    stats = {}
+
+    # Displacement stats
+    if displacements:
+        stats["mean_disp"] = mean(displacements)
+        stats["max_disp"] = max(displacements)
+        stats["min_disp"] = min(displacements)
+        stats["mode_disp"] = compute_mode(displacements)
+    else:
+        stats["mean_disp"] = None
+        stats["max_disp"] = None
+        stats["min_disp"] = None
+        stats["mode_disp"] = None
+
+    # Rotation stats
+    if rotations:
+        stats["mean_rot"] = mean(rotations)
+        stats["max_rot"] = max(rotations)
+        stats["min_rot"] = min(rotations)
+        stats["mode_rot"] = compute_mode(rotations)
+    else:
+        stats["mean_rot"] = None
+        stats["max_rot"] = None
+        stats["min_rot"] = None
+        stats["mode_rot"] = None
+
+    return stats
+
+
 def load_scene_metrics(eval_path: Path) -> dict:
     """Load metrics from eval_result file (v1 or v2)."""
     with open(eval_path, "r") as f:
@@ -267,6 +396,37 @@ def load_scene_metrics(eval_path: Path) -> dict:
         metrics[abbrev] = value
 
     return metrics
+
+
+def load_scene_equilibrium_stats(eval_path: Path) -> dict:
+    """Load equilibrium statistics from eval_result file."""
+    with open(eval_path, "r") as f:
+        data = json.load(f)
+
+    results = data.get("results", {})
+
+    stats = {}
+
+    # Extract stats for both filter modes
+    for filter_mode, stat_type, value_type, abbrev, direction, display_name in EQUILIBRIUM_STATS_CONFIG:
+        # Get stats for this filter mode (cached per filter_mode)
+        cache_key = f"_cache_{filter_mode}"
+        if cache_key not in stats:
+            stats[cache_key] = extract_equilibrium_object_stats(results, filter_mode)
+
+        cached_stats = stats[cache_key]
+        if cached_stats is not None:
+            key = f"{stat_type}_{value_type}"
+            stats[abbrev] = cached_stats.get(key)
+        else:
+            stats[abbrev] = None
+
+    # Remove cache keys
+    for key in list(stats.keys()):
+        if key.startswith("_cache_"):
+            del stats[key]
+
+    return stats
 
 
 # =============================================================================
@@ -326,6 +486,35 @@ def format_value(value: float | None, abbrev: str) -> str:
         return f"{value:.1%}"
 
 
+def format_equilibrium_value(value: float | None, abbrev: str) -> str:
+    """Format an equilibrium statistic value for display."""
+    if value is None:
+        return "-"
+
+    # Handle NaN and infinity
+    if math.isnan(value) or math.isinf(value):
+        return "-"
+
+    # Detect value type from abbreviation suffix
+    # D = displacement (meters), R = rotation (radians)
+    if abbrev.endswith("D"):
+        # Displacement in meters - show in mm if < 1m, otherwise m
+        if abs(value) < 0.001:
+            return f"{value*1000:.3f}mm"
+        elif abs(value) < 1.0:
+            return f"{value*1000:.1f}mm"
+        else:
+            return f"{value:.3f}m"
+    elif abbrev.endswith("R"):
+        # Rotation in radians
+        if abs(value) < 0.001:
+            return f"{value:.4f}rad"
+        else:
+            return f"{value:.3f}rad"
+    else:
+        return f"{value:.4f}"
+
+
 def generate_metric_legend() -> str:
     """Generate the metric legend section."""
     lines = [
@@ -367,6 +556,57 @@ def generate_metric_legend() -> str:
             desc = display_name
 
         lines.append(f"| {abbrev} | {display_name} | {desc} | {dir_str} |")
+
+    return "\n".join(lines)
+
+
+def generate_equilibrium_legend() -> str:
+    """Generate the equilibrium statistics legend section."""
+    lines = [
+        "## Equilibrium Statistics Legend",
+        "",
+        "Statistics are computed from physics simulation displacement/rotation values.",
+        "",
+        "**Object Sets:**",
+        "- **All (A\\*)**: All non-welded objects (stable + unstable combined)",
+        "- **Unstable (U\\*)**: Only unstable objects (objects that moved during simulation)",
+        "",
+        "**Statistics:**",
+        "- **Mean**: Average value across objects",
+        "- **Max (X)**: Maximum value",
+        "- **Min (N)**: Minimum value",
+        "- **Mode (O)**: Most common value (rounded to 3 decimal places)",
+        "",
+        "**Value Types:**",
+        "- **Disp (\\*D)**: Displacement in meters (shown as mm when < 1m)",
+        "- **Rot (\\*R)**: Rotation in radians",
+        "",
+        "| Abbrev | Description |",
+        "|:-------|:------------|",
+    ]
+
+    abbrev_descriptions = {
+        "AMD": "All objects: Mean displacement",
+        "AXD": "All objects: Max displacement",
+        "AND": "All objects: Min displacement",
+        "AOD": "All objects: Mode displacement",
+        "AMR": "All objects: Mean rotation",
+        "AXR": "All objects: Max rotation",
+        "ANR": "All objects: Min rotation",
+        "AOR": "All objects: Mode rotation",
+        "UMD": "Unstable objects: Mean displacement",
+        "UXD": "Unstable objects: Max displacement",
+        "UND": "Unstable objects: Min displacement",
+        "UOD": "Unstable objects: Mode displacement",
+        "UMR": "Unstable objects: Mean rotation",
+        "UXR": "Unstable objects: Max rotation",
+        "UNR": "Unstable objects: Min rotation",
+        "UOR": "Unstable objects: Mode rotation",
+    }
+
+    for filter_mode, stat_type, value_type, abbrev, direction, display_name in EQUILIBRIUM_STATS_CONFIG:
+        desc = abbrev_descriptions.get(abbrev, display_name)
+        lines.append(f"| {abbrev} | {desc} |")
 
     return "\n".join(lines)
 
@@ -438,8 +678,62 @@ def generate_results_table(
     return "\n".join(lines)
 
 
+def generate_equilibrium_stats_table(
+    all_equilibrium_data: dict[str, dict[int, dict]],
+    methods: list[str],
+    scene_ids: set[int],
+    title: str,
+) -> str:
+    """Generate an equilibrium statistics table for a set of scenes."""
+    # Split stats into two groups: All non-welded and Unstable only
+    all_abbrevs = [cfg[3] for cfg in EQUILIBRIUM_STATS_CONFIG if cfg[0] == "all"]
+    unstable_abbrevs = [cfg[3] for cfg in EQUILIBRIUM_STATS_CONFIG if cfg[0] == "unstable"]
+
+    lines = [
+        f"## {title}",
+        "",
+        "### All Non-Welded Objects",
+        "",
+        "| Method | N | " + " | ".join(all_abbrevs) + " |",
+        "|:---|---:|" + "|".join(["---:" for _ in all_abbrevs]) + "|",
+    ]
+
+    for method in methods:
+        method_data = all_equilibrium_data.get(method, {})
+        agg, count = aggregate_metrics(method_data, scene_ids)
+
+        row = [method, str(count)]
+        for abbrev in all_abbrevs:
+            value = agg.get(abbrev)
+            row.append(format_equilibrium_value(value, abbrev))
+
+        lines.append("| " + " | ".join(row) + " |")
+
+    lines.extend([
+        "",
+        "### Unstable Objects Only",
+        "",
+        "| Method | N | " + " | ".join(unstable_abbrevs) + " |",
+        "|:---|---:|" + "|".join(["---:" for _ in unstable_abbrevs]) + "|",
+    ])
+
+    for method in methods:
+        method_data = all_equilibrium_data.get(method, {})
+        agg, count = aggregate_metrics(method_data, scene_ids)
+
+        row = [method, str(count)]
+        for abbrev in unstable_abbrevs:
+            value = agg.get(abbrev)
+            row.append(format_equilibrium_value(value, abbrev))
+
+        lines.append("| " + " | ".join(row) + " |")
+
+    return "\n".join(lines)
+
+
 def generate_markdown_report(
     all_method_data: dict[str, dict[int, dict]],
+    all_equilibrium_data: dict[str, dict[int, dict]],
     annotations: dict,
 ) -> str:
     """Generate the complete markdown report."""
@@ -458,6 +752,8 @@ def generate_markdown_report(
 
     # Metric legend
     sections.append(generate_metric_legend())
+    sections.append("")
+    sections.append(generate_equilibrium_legend())
     sections.append("")
     sections.append("---")
     sections.append("")
@@ -506,6 +802,13 @@ def generate_markdown_report(
         ))
         sections.append("")
 
+    # Equilibrium statistics for room scenes
+    sections.append(generate_equilibrium_stats_table(
+        all_equilibrium_data, room_methods, room_ids,
+        "Equilibrium Statistics (All Room Scenes)"
+    ))
+    sections.append("")
+
     # House scenes section
     sections.append("---")
     sections.append("")
@@ -518,6 +821,13 @@ def generate_markdown_report(
     sections.append(generate_results_table(
         all_method_data, house_methods, house_ids,
         "Overall Results (House Scenes)"
+    ))
+    sections.append("")
+
+    # Equilibrium statistics for house scenes
+    sections.append(generate_equilibrium_stats_table(
+        all_equilibrium_data, house_methods, house_ids,
+        "Equilibrium Statistics (House Scenes)"
     ))
     sections.append("")
 
@@ -540,6 +850,7 @@ def main():
     # Discover and load all method data
     all_methods = set(ROOM_METHODS) | set(HOUSE_METHODS)
     all_method_data = {}
+    all_equilibrium_data = {}
 
     for method in all_methods:
         nested = method in NESTED_METHODS
@@ -551,20 +862,24 @@ def main():
         if not scene_paths:
             continue
 
-        # Load metrics for each scene
+        # Load metrics and equilibrium stats for each scene
         method_data = {}
+        equilibrium_data = {}
         for scene_id, eval_path in scene_paths.items():
             try:
                 metrics = load_scene_metrics(eval_path)
                 method_data[scene_id] = metrics
+                eq_stats = load_scene_equilibrium_stats(eval_path)
+                equilibrium_data[scene_id] = eq_stats
             except Exception as e:
                 print(f"  Error loading scene {scene_id}: {e}")
 
         all_method_data[method] = method_data
+        all_equilibrium_data[method] = equilibrium_data
 
     # Generate markdown report
     print(f"\nGenerating markdown report...")
-    report = generate_markdown_report(all_method_data, annotations)
+    report = generate_markdown_report(all_method_data, all_equilibrium_data, annotations)
 
     # Write output
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
