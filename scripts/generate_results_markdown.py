@@ -16,7 +16,8 @@ import re
 from collections import defaultdict, Counter
 from datetime import datetime
 from pathlib import Path
-from statistics import mean
+from statistics import mean, stdev
+from scipy.stats import t as t_dist
 
 
 # =============================================================================
@@ -662,7 +663,8 @@ def aggregate_metrics(method_data: dict[int, dict], scene_ids: set[int]) -> tupl
         scene_ids: set of scene IDs to aggregate over
 
     Returns:
-        (aggregated_metrics, count) where aggregated_metrics has average values
+        (aggregated_metrics, count) where aggregated_metrics has (mean, ci) tuples
+        ci is the 95% confidence interval half-width, or None if n < 2
     """
     # Filter to scenes in both method_data and scene_ids
     valid_ids = set(method_data.keys()) & scene_ids
@@ -671,68 +673,107 @@ def aggregate_metrics(method_data: dict[int, dict], scene_ids: set[int]) -> tupl
     if count == 0:
         return {}, 0
 
-    # Accumulate values
-    value_sums = defaultdict(float)
-    value_counts = defaultdict(int)
+    # Collect all values per metric (filter out None and NaN)
+    values_by_metric = defaultdict(list)
 
     for scene_id in valid_ids:
         metrics = method_data[scene_id]
         for abbrev, value in metrics.items():
-            if value is not None:
-                value_sums[abbrev] += value
-                value_counts[abbrev] += 1
+            if value is not None and not math.isnan(value):
+                values_by_metric[abbrev].append(value)
 
-    # Compute averages
-    averages = {}
-    for abbrev in value_sums:
-        if value_counts[abbrev] > 0:
-            averages[abbrev] = value_sums[abbrev] / value_counts[abbrev]
+    # Compute mean and 95% CI for each metric
+    aggregated = {}
+    for abbrev, values in values_by_metric.items():
+        n = len(values)
+        if n == 0:
+            continue
+        elif n == 1:
+            # Can't compute variance with 1 sample
+            aggregated[abbrev] = (values[0], None)
+        else:
+            # Compute mean, SD, and 95% CI
+            m = mean(values)
+            sd = stdev(values)
+            # t-value for 95% CI with n-1 degrees of freedom
+            t_val = t_dist.ppf(0.975, n - 1)
+            ci = t_val * (sd / math.sqrt(n))
+            aggregated[abbrev] = (m, ci)
 
-    return averages, count
+    return aggregated, count
 
 
 # =============================================================================
 # MARKDOWN GENERATION
 # =============================================================================
 
-def format_value(value: float | None, abbrev: str) -> str:
-    """Format a metric value for display."""
+def format_value(value: tuple[float, float | None] | None, abbrev: str) -> str:
+    """Format a metric value with optional CI for display.
+
+    Args:
+        value: Either None, or a tuple (mean, ci) where ci may be None
+        abbrev: Metric abbreviation to determine formatting
+    """
     if value is None:
         return "-"
+
+    mean_val, ci = value
 
     if abbrev == "#Obj":
-        return f"{value:.1f}"
+        if ci is not None:
+            return f"{mean_val:.1f} ± {ci:.1f}"
+        return f"{mean_val:.1f}"
     else:
-        return f"{value:.1%}"
+        # Percentage format
+        if ci is not None:
+            return f"{mean_val:.1%} ± {ci:.1%}"
+        return f"{mean_val:.1%}"
 
 
-def format_equilibrium_value(value: float | None, abbrev: str) -> str:
-    """Format an equilibrium statistic value for display."""
+def format_equilibrium_value(value: tuple[float, float | None] | None, abbrev: str) -> str:
+    """Format an equilibrium statistic value with optional CI for display.
+
+    Args:
+        value: Either None, or a tuple (mean, ci) where ci may be None
+        abbrev: Metric abbreviation to determine formatting
+    """
     if value is None:
         return "-"
 
+    mean_val, ci = value
+
     # Handle NaN and infinity
-    if math.isnan(value) or math.isinf(value):
+    if math.isnan(mean_val) or math.isinf(mean_val):
         return "-"
 
     # Detect value type from abbreviation suffix
     # D = displacement (meters), R = rotation (radians)
     if abbrev.endswith("D"):
         # Displacement in meters - show in mm if < 1m, otherwise m
-        if abs(value) < 0.001:
-            return f"{value*1000:.3f}mm"
-        elif abs(value) < 1.0:
-            return f"{value*1000:.1f}mm"
+        if abs(mean_val) < 0.001:
+            mean_str = f"{mean_val*1000:.3f}mm"
+            ci_str = f"{ci*1000:.3f}mm" if ci is not None else None
+        elif abs(mean_val) < 1.0:
+            mean_str = f"{mean_val*1000:.1f}mm"
+            ci_str = f"{ci*1000:.1f}mm" if ci is not None else None
         else:
-            return f"{value:.3f}m"
+            mean_str = f"{mean_val:.3f}m"
+            ci_str = f"{ci:.3f}m" if ci is not None else None
     elif abbrev.endswith("R"):
         # Rotation in radians
-        if abs(value) < 0.001:
-            return f"{value:.4f}rad"
+        if abs(mean_val) < 0.001:
+            mean_str = f"{mean_val:.4f}rad"
+            ci_str = f"{ci:.4f}rad" if ci is not None else None
         else:
-            return f"{value:.3f}rad"
+            mean_str = f"{mean_val:.3f}rad"
+            ci_str = f"{ci:.3f}rad" if ci is not None else None
     else:
-        return f"{value:.4f}"
+        mean_str = f"{mean_val:.4f}"
+        ci_str = f"{ci:.4f}" if ci is not None else None
+
+    if ci_str is not None:
+        return f"{mean_str} ± {ci_str}"
+    return mean_str
 
 
 def generate_metric_legend() -> str:
@@ -777,6 +818,14 @@ def generate_metric_legend() -> str:
 
         lines.append(f"| {abbrev} | {display_name} | {desc} | {dir_str} |")
 
+    # Add error bar explanation
+    lines.extend([
+        "",
+        "**Error Bars:** Values are reported as mean ± 95% confidence interval (CI). "
+        "The CI is computed using the t-distribution: CI = t(0.975, n-1) × (SD / √n), "
+        "where n is the number of scenes. Non-overlapping CIs suggest statistically significant differences.",
+    ])
+
     return "\n".join(lines)
 
 
@@ -786,6 +835,8 @@ def generate_equilibrium_legend() -> str:
         "## Equilibrium Statistics Legend",
         "",
         "Statistics are computed from physics simulation displacement/rotation values.",
+        "",
+        "**Error Bars:** Values are reported as mean ± 95% CI across scenes (see Metric Legend for formula).",
         "",
         "**Object Sets:**",
         "- **All (A\\*)**: All non-welded objects (stable + unstable combined)",

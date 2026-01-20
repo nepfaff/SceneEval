@@ -11,7 +11,10 @@ The combined_scene.gltf files exported by scene-agent contain multiple nodes
 merges them into a single mesh file that can be imported correctly.
 
 Usage:
-    python scripts/fix_articulated_meshes.py input/SceneAgent
+    python scripts/fix_articulated_meshes.py input/SceneAgent [--scene scene_0] [--force]
+
+    # Or use Blender directly for material preservation:
+    blender --background --python scripts/fix_articulated_meshes_blender.py -- input/SceneAgent
 
 This will:
 1. Find all combined_scene.gltf files in the input directory
@@ -19,195 +22,32 @@ This will:
 3. Save as combined_merged.glb (single mesh with materials preserved)
 
 The scene_agent.py asset loader will then use combined_merged.glb if present.
+
+NOTE: This script uses trimesh for mesh merging which may lose PBR materials.
+For full material preservation, use fix_articulated_meshes_blender.py instead.
 """
 
-import json
 import argparse
+import subprocess
+import sys
 from pathlib import Path
-
-import trimesh
 
 
 def is_articulated_sdf(sdf_dir: Path) -> bool:
-    """Check if an SDF directory contains an articulated object."""
-    combined_scene = sdf_dir / "combined_scene.gltf"
-    if not combined_scene.exists():
-        return False
+    """Check if an SDF directory contains an articulated object.
 
+    An articulated object is detected by either:
+    1. Having multiple E_*_combined.gltf link mesh files, OR
+    2. Having a combined_scene.gltf file with multiple links
+    """
     # Check if there are multiple link meshes (E_*_combined.gltf files)
     link_meshes = list(sdf_dir.glob("E_*_combined.gltf"))
-    return len(link_meshes) > 1
+    if len(link_meshes) > 1:
+        return True
 
-
-def get_sdf_scale_factor(sdf_dir: Path) -> float:
-    """
-    Extract the uniform scale factor from an SDF file.
-
-    Articulated objects from PartNet-Mobility often have scale elements in
-    their SDF mesh definitions.
-
-    Args:
-        sdf_dir: Directory containing the SDF file
-
-    Returns:
-        Uniform scale factor (1.0 if no scale found)
-    """
-    import xml.etree.ElementTree as ET
-
-    # Find SDF file in directory
-    sdf_files = list(sdf_dir.glob("*.sdf"))
-    if not sdf_files:
-        return 1.0
-
-    try:
-        tree = ET.parse(sdf_files[0])
-        root = tree.getroot()
-
-        # Find first scale element
-        for scale_elem in root.iter("scale"):
-            if scale_elem.text:
-                values = [float(v) for v in scale_elem.text.strip().split()]
-                if len(values) >= 3:
-                    # Check if uniform scale
-                    if values[0] == values[1] == values[2]:
-                        return values[0]
-                    else:
-                        # Non-uniform scale - use average
-                        return sum(values[:3]) / 3
-        return 1.0
-    except Exception:
-        return 1.0
-
-
-def merge_combined_scene(sdf_dir: Path, force: bool = False) -> Path | None:
-    """
-    Merge combined_scene.gltf into a single mesh file.
-
-    Also applies:
-    - 180° rotation around Y axis to match Drake's orientation (combined_scene.gltf
-      is exported with a different orientation than what Drake produces)
-    - Scale factor from the SDF file (PartNet-Mobility objects often have scale
-      factors baked into the SDF but not the GLTF meshes)
-
-    Args:
-        sdf_dir: Directory containing combined_scene.gltf
-        force: If True, regenerate even if merged file exists
-
-    Returns:
-        Path to merged file, or None if merging failed
-    """
-    import numpy as np
-
-    combined_scene_path = sdf_dir / "combined_scene.gltf"
-    merged_output_path = sdf_dir / "combined_merged.glb"
-
-    # Skip if already merged (unless force)
-    if merged_output_path.exists() and not force:
-        return merged_output_path
-
-    # Delete existing merged file if force
-    if merged_output_path.exists() and force:
-        merged_output_path.unlink()
-
-    try:
-        # Get scale factor from SDF
-        scale_factor = get_sdf_scale_factor(sdf_dir)
-
-        # Load the GLTF scene
-        scene = trimesh.load(str(combined_scene_path))
-
-        if isinstance(scene, trimesh.Scene):
-            # Get all geometry from the scene
-            meshes = []
-            for node_name in scene.graph.nodes_geometry:
-                transform, geometry_name = scene.graph[node_name]
-                geometry = scene.geometry[geometry_name]
-
-                if isinstance(geometry, trimesh.Trimesh):
-                    # Apply the node transform to the mesh
-                    mesh_copy = geometry.copy()
-                    mesh_copy.apply_transform(transform)
-                    meshes.append(mesh_copy)
-
-            if not meshes:
-                print(f"    Warning: No meshes found in {combined_scene_path}")
-                return None
-
-            # Concatenate all meshes into one
-            merged = trimesh.util.concatenate(meshes)
-
-            # Apply 180° rotation around Y axis to match Drake's orientation
-            # combined_scene.gltf is exported from Blender with a different
-            # orientation than what Drake produces when loading the SDF
-            rotation_180_y = trimesh.transformations.rotation_matrix(
-                np.pi, [0, 1, 0]  # 180° around Y axis
-            )
-            merged.apply_transform(rotation_180_y)
-
-            # Apply SDF scale factor if not 1.0
-            if scale_factor != 1.0:
-                merged.apply_scale(scale_factor)
-                print(f"    Applied scale factor: {scale_factor}")
-
-            # Export as GLB (binary format preserves more data)
-            merged.export(str(merged_output_path))
-
-            print(f"    Merged {len(meshes)} meshes -> {merged_output_path.name}")
-            return merged_output_path
-
-        elif isinstance(scene, trimesh.Trimesh):
-            # Already a single mesh - apply rotation and scale
-            rotation_180_y = trimesh.transformations.rotation_matrix(np.pi, [0, 1, 0])
-            scene.apply_transform(rotation_180_y)
-            if scale_factor != 1.0:
-                scene.apply_scale(scale_factor)
-                print(f"    Applied scale factor: {scale_factor}")
-            scene.export(str(merged_output_path))
-            print(f"    Single mesh copied -> {merged_output_path.name}")
-            return merged_output_path
-
-        else:
-            print(f"    Warning: Unexpected scene type: {type(scene)}")
-            return None
-
-    except Exception as e:
-        print(f"    Error merging {combined_scene_path}: {e}")
-        return None
-
-
-def fix_scene_articulated_meshes(scene_dir: Path, force: bool = False) -> int:
-    """
-    Fix all articulated meshes in a scene directory.
-
-    Args:
-        scene_dir: Path to scene directory (e.g., input/SceneAgent/scene_0)
-        force: If True, regenerate even if merged file exists
-
-    Returns:
-        Number of meshes fixed
-    """
-    assets_dir = scene_dir / "assets"
-    if not assets_dir.exists():
-        return 0
-
-    fixed_count = 0
-
-    # Find all SDF directories
-    for category in ["furniture", "manipuland", "wall_mounted", "ceiling_mounted"]:
-        sdf_base = assets_dir / category / "sdf"
-        if not sdf_base.exists():
-            continue
-
-        for sdf_dir in sdf_base.iterdir():
-            if not sdf_dir.is_dir():
-                continue
-
-            if is_articulated_sdf(sdf_dir):
-                result = merge_combined_scene(sdf_dir, force=force)
-                if result:
-                    fixed_count += 1
-
-    return fixed_count
+    # Fallback: check for combined_scene.gltf (older export format)
+    combined_scene = sdf_dir / "combined_scene.gltf"
+    return combined_scene.exists()
 
 
 def main():
@@ -228,13 +68,20 @@ def main():
     parser.add_argument(
         "--force",
         action="store_true",
-        help="Regenerate merged files even if they already exist (use if scale was wrong)",
+        help="Regenerate merged files even if they already exist",
+    )
+    parser.add_argument(
+        "--use-blender",
+        action="store_true",
+        default=True,
+        help="Use Blender for mesh merging (preserves PBR materials, default: True)",
+    )
+    parser.add_argument(
+        "--no-blender",
+        action="store_true",
+        help="Use trimesh instead of Blender (faster but loses PBR materials)",
     )
     args = parser.parse_args()
-
-    # If force flag is set, delete existing merged files first
-    if args.force:
-        print("Force mode: will regenerate existing merged files")
 
     input_dir = Path(args.input_dir).expanduser().resolve()
 
@@ -242,27 +89,178 @@ def main():
         print(f"Error: Input directory not found: {input_dir}")
         return 1
 
+    # Determine whether to use Blender or trimesh
+    use_blender = args.use_blender and not args.no_blender
+
+    if use_blender:
+        # Call the Blender version
+        script_dir = Path(__file__).parent
+        blender_script = script_dir / "fix_articulated_meshes_blender.py"
+
+        if not blender_script.exists():
+            print(f"Error: Blender script not found: {blender_script}")
+            return 1
+
+        # Build the Blender command
+        cmd = [
+            "blender",
+            "--background",
+            "--python", str(blender_script),
+            "--",
+            str(input_dir),
+        ]
+
+        if args.scene:
+            cmd.extend(["--scene", args.scene])
+        if args.force:
+            cmd.append("--force")
+
+        print(f"Running Blender for mesh merging (preserves PBR materials)...")
+        result = subprocess.run(cmd)
+        return result.returncode
+    else:
+        # Use trimesh (legacy behavior)
+        return run_trimesh_merge(input_dir, args.scene, args.force)
+
+
+def run_trimesh_merge(input_dir: Path, scene: str | None, force: bool) -> int:
+    """Run the legacy trimesh-based mesh merging (loses PBR materials)."""
+    import trimesh
+    import xml.etree.ElementTree as ET
+
+    def get_sdf_scale_factor(sdf_dir: Path) -> float:
+        """Extract the uniform scale factor from an SDF file."""
+        sdf_files = list(sdf_dir.glob("*.sdf"))
+        if not sdf_files:
+            return 1.0
+
+        try:
+            tree = ET.parse(sdf_files[0])
+            root = tree.getroot()
+
+            for scale_elem in root.iter("scale"):
+                if scale_elem.text:
+                    values = [float(v) for v in scale_elem.text.strip().split()]
+                    if len(values) >= 3:
+                        if values[0] == values[1] == values[2]:
+                            return values[0]
+                        else:
+                            return sum(values[:3]) / 3
+            return 1.0
+        except Exception:
+            return 1.0
+
+    def merge_combined_scene(sdf_dir: Path, force: bool = False) -> Path | None:
+        """Merge articulated object meshes using trimesh."""
+        combined_scene_path = sdf_dir / "combined_scene.gltf"
+        merged_output_path = sdf_dir / "combined_merged.glb"
+
+        if merged_output_path.exists() and not force:
+            return merged_output_path
+
+        if merged_output_path.exists() and force:
+            merged_output_path.unlink()
+
+        try:
+            scale_factor = get_sdf_scale_factor(sdf_dir)
+            meshes = []
+
+            if combined_scene_path.exists():
+                scene = trimesh.load(str(combined_scene_path))
+                if isinstance(scene, trimesh.Scene):
+                    for node_name in scene.graph.nodes_geometry:
+                        transform, geometry_name = scene.graph[node_name]
+                        geometry = scene.geometry[geometry_name]
+                        if isinstance(geometry, trimesh.Trimesh):
+                            mesh_copy = geometry.copy()
+                            mesh_copy.apply_transform(transform)
+                            meshes.append(mesh_copy)
+                elif isinstance(scene, trimesh.Trimesh):
+                    meshes.append(scene)
+            else:
+                link_mesh_files = sorted(sdf_dir.glob("E_*_combined.gltf"))
+                if not link_mesh_files:
+                    print(f"    Warning: No meshes found in {sdf_dir}")
+                    return None
+
+                for link_file in link_mesh_files:
+                    try:
+                        link_mesh = trimesh.load(str(link_file))
+                        if isinstance(link_mesh, trimesh.Scene):
+                            for node_name in link_mesh.graph.nodes_geometry:
+                                transform, geometry_name = link_mesh.graph[node_name]
+                                geometry = link_mesh.geometry[geometry_name]
+                                if isinstance(geometry, trimesh.Trimesh):
+                                    mesh_copy = geometry.copy()
+                                    mesh_copy.apply_transform(transform)
+                                    meshes.append(mesh_copy)
+                        elif isinstance(link_mesh, trimesh.Trimesh):
+                            meshes.append(link_mesh)
+                    except Exception as e:
+                        print(f"    Warning: Failed to load {link_file.name}: {e}")
+
+            if not meshes:
+                print(f"    Warning: No meshes found in {sdf_dir}")
+                return None
+
+            merged = trimesh.util.concatenate(meshes)
+
+            if scale_factor != 1.0:
+                merged.apply_scale(scale_factor)
+                print(f"    Applied scale factor: {scale_factor}")
+
+            merged.export(str(merged_output_path))
+            print(f"    Merged {len(meshes)} meshes -> {merged_output_path.name}")
+            return merged_output_path
+
+        except Exception as e:
+            print(f"    Error merging meshes in {sdf_dir}: {e}")
+            return None
+
+    def fix_scene_articulated_meshes(scene_dir: Path, force: bool = False) -> int:
+        """Fix all articulated meshes in a scene directory."""
+        assets_dir = scene_dir / "assets"
+        if not assets_dir.exists():
+            return 0
+
+        fixed_count = 0
+        for category in ["furniture", "manipuland", "wall_mounted", "ceiling_mounted"]:
+            sdf_base = assets_dir / category / "sdf"
+            if not sdf_base.exists():
+                continue
+
+            for sdf_dir in sdf_base.iterdir():
+                if not sdf_dir.is_dir():
+                    continue
+
+                if is_articulated_sdf(sdf_dir):
+                    result = merge_combined_scene(sdf_dir, force=force)
+                    if result:
+                        fixed_count += 1
+
+        return fixed_count
+
+    print("WARNING: Using trimesh for mesh merging. PBR materials will be lost.")
+    print("         Use --use-blender (default) to preserve materials.")
+
+    if force:
+        print("Force mode: will regenerate existing merged files")
+
     total_fixed = 0
 
-    if args.scene:
-        # Fix single scene
-        scene_dir = input_dir / args.scene
+    if scene:
+        scene_dir = input_dir / scene
         if not scene_dir.exists():
             print(f"Error: Scene directory not found: {scene_dir}")
             return 1
 
-        print(f"Fixing articulated meshes in {args.scene}...")
-        fixed = fix_scene_articulated_meshes(scene_dir, force=args.force)
+        print(f"Fixing articulated meshes in {scene}...")
+        fixed = fix_scene_articulated_meshes(scene_dir, force=force)
         total_fixed += fixed
         print(f"  Fixed {fixed} articulated objects")
     else:
-        # Fix all scenes
         scene_dirs = sorted(
-            [
-                d
-                for d in input_dir.iterdir()
-                if d.is_dir() and d.name.startswith("scene_")
-            ]
+            [d for d in input_dir.iterdir() if d.is_dir() and d.name.startswith("scene_")]
         )
 
         if not scene_dirs:
@@ -273,7 +271,7 @@ def main():
 
         for scene_dir in scene_dirs:
             print(f"\nProcessing {scene_dir.name}...")
-            fixed = fix_scene_articulated_meshes(scene_dir, force=args.force)
+            fixed = fix_scene_articulated_meshes(scene_dir, force=force)
             total_fixed += fixed
             if fixed > 0:
                 print(f"  Fixed {fixed} articulated objects")
@@ -285,4 +283,4 @@ def main():
 
 
 if __name__ == "__main__":
-    exit(main())
+    sys.exit(main())
