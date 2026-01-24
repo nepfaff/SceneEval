@@ -828,7 +828,7 @@ class BlenderScene:
                     pass
 
         # Prepare materials (needed for non-converted walls or as fallback)
-        # Wall material with default gray color (#888899)
+        # Wall material with warm off-white color (same as HSM/LayoutVLM)
         wall_material = bpy.data.materials.new(name="wall_material")
         wall_material.use_nodes = True
         wall_nodes = wall_material.node_tree.nodes
@@ -838,7 +838,7 @@ class BlenderScene:
         wall_bsdf.inputs["Base Color"].default_value = (0.85, 0.82, 0.78, 1.0)  # Warm off-white wall color
         wall_material.node_tree.links.new(wall_bsdf.outputs["BSDF"], wall_output.inputs["Surface"])
 
-        # Floor material with wood-like tan color
+        # Floor material with wood-like tan color (same as HSM/LayoutVLM)
         floor_material = bpy.data.materials.new(name="floor_material")
         floor_material.use_nodes = True
         floor_nodes = floor_material.node_tree.nodes

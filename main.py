@@ -430,12 +430,82 @@ def _render_with_oom_retry(output_path: pathlib.Path) -> None:
     raise RuntimeError(f"Failed to render {output_path} even with smallest tile size ({_OOM_TILE_SIZES[-1]})")
 
 
+def _fix_idesign_floor(architecture) -> None:
+    """
+    Fix IDesign floor dimensions in the current Blender scene.
+
+    IDesign's original blend files have a hardcoded 7.5x7.5m square floor
+    regardless of actual room dimensions. This function deletes the incorrect
+    floor and creates a new one based on the architecture data.
+
+    Args:
+        architecture: Architecture object with correct floor dimensions.
+    """
+    import bpy
+
+    if architecture is None or architecture.elements is None:
+        return
+
+    # Find floor element from architecture (type may be "Floor" or "floor")
+    floor_element = None
+    for element in architecture.elements:
+        if element.type and element.type.lower() == "floor":
+            floor_element = element
+            break
+
+    if floor_element is None or not floor_element.points:
+        return
+
+    # Delete existing floor objects
+    floors_to_delete = []
+    for obj in bpy.data.objects:
+        if obj.type == 'MESH' and 'floor' in obj.name.lower():
+            floors_to_delete.append(obj)
+
+    for obj in floors_to_delete:
+        bpy.data.objects.remove(obj, do_unlink=True)
+
+    # Create new floor from architecture points
+    points = floor_element.points
+    if len(points) < 3:
+        return
+
+    # Create vertices (at z=0)
+    verts = [(p[0], p[1], 0) for p in points]
+
+    # Create a single face from all vertices
+    faces = [tuple(range(len(verts)))]
+
+    # Create mesh and object
+    mesh = bpy.data.meshes.new("floor_0")
+    mesh.from_pydata(verts, [], faces)
+    mesh.update()
+
+    floor_obj = bpy.data.objects.new("floor_0", mesh)
+    bpy.context.scene.collection.objects.link(floor_obj)
+
+    # Create floor material (wood/tan color to match HSM/LayoutVLM)
+    floor_material = bpy.data.materials.new(name="floor_material_fixed")
+    floor_material.use_nodes = True
+    nodes = floor_material.node_tree.nodes
+    nodes.clear()
+    bsdf = nodes.new("ShaderNodeBsdfPrincipled")
+    output = nodes.new("ShaderNodeOutputMaterial")
+    bsdf.inputs["Base Color"].default_value = (0.72, 0.58, 0.42, 1.0)  # Wood/tan floor color
+    floor_material.node_tree.links.new(bsdf.outputs["BSDF"], output.inputs["Surface"])
+    floor_obj.data.materials.append(floor_material)
+
+    print(f"  Fixed IDesign floor: replaced 7.5x7.5m with {len(points)}-point floor from arch data")
+
+
 def _render_room_views_from_blend(
     blend_path: pathlib.Path,
     output_dir: pathlib.Path,
     hdri_path: pathlib.Path | None = None,
     hdri_strength: float = 0.7,
     resolution: int = 512,
+    method: str | None = None,
+    architecture=None,
 ) -> None:
     """
     Render 9 room views (1 top + 8 side) from a blend file with wall hiding.
@@ -446,6 +516,8 @@ def _render_room_views_from_blend(
         hdri_path: Optional HDRI file for consistent lighting.
         hdri_strength: Strength of the HDRI lighting (default 0.7).
         resolution: Render resolution (square).
+        method: Scene generation method name (e.g., "IDesign").
+        architecture: Architecture object with correct floor dimensions.
     """
     import bpy
     import math
@@ -470,6 +542,10 @@ def _render_room_views_from_blend(
     # Save current state and open blend file
     current_blend = bpy.data.filepath
     bpy.ops.wm.open_mainfile(filepath=str(blend_path))
+
+    # Fix IDesign floor dimensions (original blend has hardcoded 7.5x7.5m floor)
+    if method == "IDesign" and architecture is not None:
+        _fix_idesign_floor(architecture)
 
     # Try to mark outer walls from house_layout.json (SceneAgent format)
     # This allows only outer walls to be hidden during dollhouse rendering
@@ -1234,7 +1310,12 @@ def main(cfg: DictConfig) -> None:
                     hdri_strength = cfg.models[method].get("hdri_strength", 0.7)
                     if original_blend:
                         print(f"  Rendering room views from: {original_blend} (hdri_strength={hdri_strength}, resolution={blender_cfg.resolution_x})")
-                        _render_room_views_from_blend(original_blend, output_dir, hdri_path, hdri_strength, resolution=blender_cfg.resolution_x)
+                        _render_room_views_from_blend(
+                            original_blend, output_dir, hdri_path, hdri_strength,
+                            resolution=blender_cfg.resolution_x,
+                            method=method,
+                            architecture=scene_state.architecture,
+                        )
                         # Recreate scene after room view rendering
                         scene = Scene(mesh_retriever, scene_state, scene_cfg, blender_cfg, trimesh_cfg, output_dir)
                     else:
